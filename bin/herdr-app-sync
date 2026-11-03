@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Herdr 앱 개인 설정을 ~/dotfiles/herdr-app 과 동기화한다.
+
+  herdr-app-sync save    앱 → 저장소로 복사하고 커밋(원격이 있으면 push)
+  herdr-app-sync apply   (원격이 있으면 pull 후) 저장소 → 앱으로 복사. 덮어쓰는 파일은 먼저 백업
+  herdr-app-sync status  무엇이 개인 설정으로 잡히는지, 저장소와 다른 점
+
+개인 설정 = Herdr가 기본 제공하지 않는 것(installed.json에 없는 모드·레이아웃)
+           + keys.json, settings.json, programs.json, fonts/, themes/ 중 기본 제공이 아닌 것.
+Herdr가 쓰는 파일(.state, view.json, shared.json, data/, *.d.ts, jsconfig.json …)은 넣지 않는다.
+"""
+import filecmp, json, os, shutil, subprocess, sys, time
+from pathlib import Path
+
+APP = Path.home() / ".config" / "herdr-app"
+REPO = Path(__file__).resolve().parent.parent
+STORE = REPO / "herdr-app"
+SKIP_NAMES = {"gpui-kit.d.ts", "jsconfig.json", ".DS_Store", "node_modules"}
+SHIPPED_THEMES = {"atom-one-dark.json", "win98.json"}  # Herdr가 매번 다시 쓰는 테마
+
+
+def git(*args, check=True):
+    return subprocess.run(["git", "-C", str(REPO), *args], check=check, text=True, capture_output=True)
+
+
+def personal(base: Path):
+    """base(앱 폴더 또는 저장소 사본) 안의 개인 설정 경로 목록(상대 경로)."""
+    shipped = set(json.loads((APP / "installed.json").read_text())) if (APP / "installed.json").exists() else set()
+    out = []
+    for f in ("keys.json", "settings.json", "programs.json"):
+        if (base / f).is_file():
+            out.append(Path(f))
+    if (base / "fonts").is_dir():
+        out.append(Path("fonts"))
+    for t in sorted((base / "themes").glob("*.json")) if (base / "themes").is_dir() else []:
+        if t.name not in SHIPPED_THEMES:
+            out.append(Path("themes") / t.name)
+    for m in sorted((base / "mods").iterdir()) if (base / "mods").is_dir() else []:
+        if m.is_dir() and m.name not in shipped:
+            out.append(Path("mods") / m.name)
+    for l in sorted((base / "layouts").glob("*.json")) if (base / "layouts").is_dir() else []:
+        if f"layout:{l.stem}" not in shipped:
+            out.append(Path("layouts") / l.name)
+            for pic in (l.with_suffix(".svg"), l.with_suffix(".png")):
+                if pic.exists():
+                    out.append(Path("layouts") / pic.name)
+    return out
+
+
+def copy(src: Path, dst: Path):
+    if src.is_dir():
+        shutil.copytree(src, dst, dirs_exist_ok=True, ignore=lambda _d, names: [n for n in names if n in SKIP_NAMES])
+    else:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+
+
+def files_under(base: Path, rel: Path):
+    p = base / rel
+    if p.is_file():
+        return [rel]
+    return [f.relative_to(base) for f in p.rglob("*") if f.is_file() and not (set(f.parts) & SKIP_NAMES)]
+
+
+def save():
+    if not APP.is_dir():
+        sys.exit(f"{APP} 이 없습니다")
+    items = personal(APP)
+    if STORE.exists():
+        shutil.rmtree(STORE)
+    for rel in items:
+        copy(APP / rel, STORE / rel)
+    git("add", "-A")
+    if not git("status", "--porcelain").stdout.strip():
+        print("바뀐 것이 없습니다.")
+        return
+    print(git("diff", "--cached", "--stat").stdout)
+    msg = sys.argv[2] if len(sys.argv) > 2 else f"herdr-app: save from {os.uname().nodename.split('.')[0]}"
+    git("commit", "-q", "-m", msg)
+    print("커밋했습니다:", msg)
+    if git("remote", check=False).stdout.strip():
+        r = git("push", "-q", check=False)
+        print("push 완료" if r.returncode == 0 else "push 실패:\n" + r.stderr)
+
+
+def apply():
+    if not APP.is_dir():
+        sys.exit(f"{APP} 이 없습니다. Herdr 앱을 설치하고 한 번 실행하세요.")
+    if git("remote", check=False).stdout.strip():
+        r = git("pull", "-q", "--ff-only", check=False)
+        print("pull 완료" if r.returncode == 0 else "pull 실패(로컬 저장소 내용으로 진행):\n" + r.stderr)
+    if not STORE.is_dir():
+        sys.exit("저장소에 herdr-app/ 이 없습니다. 먼저 save 하세요.")
+    backup = APP / f"backup-before-apply-{time.strftime('%Y%m%d-%H%M%S')}"
+    changed = 0
+    for rel in personal(STORE):
+        for f in files_under(STORE, rel):
+            target = APP / f
+            if target.exists() and filecmp.cmp(STORE / f, target, shallow=False):
+                continue
+            if target.exists():
+                copy(target, backup / f)
+            copy(STORE / f, target)
+            changed += 1
+            print("  ←", f)
+    print(f"{changed}개 파일 적용." + (f" 덮어쓴 파일 백업: {backup}" if backup.exists() else ""))
+    if shutil.which("herdr-app") and (STORE / "layouts" / "my-layout.json").exists():
+        subprocess.run(["herdr-app", "do", "layout.switch", '{"name":"my-layout"}'], capture_output=True)
+
+
+def status():
+    print("개인 설정으로 잡히는 것:")
+    for rel in personal(APP):
+        print("  ", rel)
+    if STORE.is_dir():
+        diff = []
+        for rel in set(personal(APP)) | set(personal(STORE)):
+            a = set(files_under(APP, rel)) if (APP / rel).exists() else set()
+            b = set(files_under(STORE, rel)) if (STORE / rel).exists() else set()
+            for f in sorted(a | b):
+                if f not in b:
+                    diff.append(f"앱에만 있음   {f}")
+                elif f not in a:
+                    diff.append(f"저장소에만    {f}")
+                elif not filecmp.cmp(APP / f, STORE / f, shallow=False):
+                    diff.append(f"내용 다름     {f}")
+        print("\n저장소와 다른 점:" if diff else "\n저장소와 같습니다.")
+        for d in diff:
+            print("  ", d)
+
+
+if __name__ == "__main__":
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    {"save": save, "apply": apply, "status": status}.get(cmd, lambda: sys.exit(__doc__))()
