@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""Claude Code / Codex 의 MCP 서버 설정을 ~/dotfiles/mcp 와 동기화한다.
+
+  mcp-sync save ["메시지"]  지금 설정 → 저장소(비밀값은 {{SECRET:이름}} 으로 바꿔서) 커밋·push
+  mcp-sync apply            저장소 → Claude Code(사용자 범위)와 Codex 에 서버 추가/갱신. 다른 서버는 그대로 둔다
+  mcp-sync status           저장소와 다른 점
+
+비밀값(API 키, 토큰, 개인 URL의 UUID 등)은 git 에 올리지 않고 mcp/secrets.local.json(.gitignore)에만 둔다.
+새 컴퓨터에서는 그 파일을 직접 복사해 오거나 만들어야 하고, 값이 없는 서버는 apply 에서 건너뛴다.
+"""
+import json, re, shutil, subprocess, sys, time, tomllib
+from pathlib import Path
+
+HOME = Path.home()
+REPO = Path(__file__).resolve().parent.parent
+STORE = REPO / "mcp"
+CLAUDE_JSON = HOME / ".claude.json"
+CODEX_TOML = HOME / ".codex" / "config.toml"
+SECRETS = STORE / "secrets.local.json"
+# ChatGPT 앱이 이 컴퓨터 경로로 직접 관리하는 Codex 서버: 옮기지 않는다
+CODEX_SKIP = {"node_repl", "computer-use"}
+
+SECRET_PATTERNS = [
+    re.compile(r"(?i)\b(?:[A-Z0-9_]*(?:API_?KEY|TOKEN|SECRET|PASSWORD))=\\?\"?([^\"'\s\\]+)"),  # KEY=value
+    re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"),          # UUID (개인 URL)
+    re.compile(r"\b(?:sk-|tvly-|gh[opsu]_|xox[bp]-)[A-Za-z0-9_-]{10,}"),                          # 흔한 토큰 접두사
+    re.compile(r"\b[0-9a-fA-F]{32,}\b"),                                                       # 긴 hex
+]
+SECRET_KEY_NAME = re.compile(r"(?i)key|token|secret|password|authorization")
+PLACEHOLDER = re.compile(r"\{\{SECRET:([A-Za-z0-9_.-]+)\}\}")
+
+
+def git(*args, check=True):
+    return subprocess.run(["git", "-C", str(REPO), *args], check=check, text=True, capture_output=True)
+
+
+class Scrubber:
+    """문자열 안의 비밀값을 {{SECRET:server_n}} 으로 바꾸고 값은 self.secrets 에 모은다."""
+
+    def __init__(self, secrets):
+        self.secrets = dict(secrets)
+        self.by_value = {v: k for k, v in self.secrets.items()}
+
+    def name_for(self, server, value):
+        if value in self.by_value:
+            return self.by_value[value]
+        n = 1
+        while f"{server}_{n}" in self.secrets:
+            n += 1
+        name = f"{server}_{n}"
+        self.secrets[name] = value
+        self.by_value[value] = name
+        return name
+
+    def text(self, server, s):
+        for pat in SECRET_PATTERNS:
+            def sub(m):
+                value = m.group(1) if m.groups() else m.group(0)
+                if PLACEHOLDER.fullmatch(value):
+                    return m.group(0)
+                return m.group(0).replace(value, "{{SECRET:%s}}" % self.name_for(server, value))
+            s = pat.sub(sub, s)
+        return s
+
+    def obj(self, server, o, key=""):
+        if isinstance(o, dict):
+            return {k: self.obj(server, v, k) for k, v in o.items()}
+        if isinstance(o, list):
+            return [self.obj(server, v, key) for v in o]
+        if isinstance(o, str):
+            if key and SECRET_KEY_NAME.search(key) and o and not PLACEHOLDER.fullmatch(o):
+                return "{{SECRET:%s}}" % self.name_for(server, o)
+            return self.text(server, o)
+        return o
+
+
+def fill(s, secrets):
+    missing = [n for n in PLACEHOLDER.findall(s) if n not in secrets]
+    return PLACEHOLDER.sub(lambda m: secrets.get(m.group(1), m.group(0)), s), missing
+
+
+# ---- Codex config.toml: [mcp_servers.<name>] 와 그 하위 표를 원문 그대로 다룬다 ----
+HEADER = re.compile(r'^\s*\[\s*mcp_servers\.("([^"]+)"|[A-Za-z0-9_-]+)(\.[^\]]*)?\s*\]\s*$')
+
+
+def codex_blocks(text):
+    """{name: 원문 블록} 과, 블록을 뺀 나머지 줄 목록."""
+    blocks, rest, cur = {}, [], None
+    for line in text.splitlines(keepends=True):
+        if line.lstrip().startswith("["):
+            m = HEADER.match(line)
+            cur = (m.group(2) or m.group(1)) if m else None
+        if cur is None:
+            rest.append(line)
+        else:
+            blocks.setdefault(cur, []).append(line)
+    return {k: "".join(v).rstrip() + "\n" for k, v in blocks.items()}, rest
+
+
+def current(scrubber):
+    claude = {}
+    if CLAUDE_JSON.exists():
+        servers = json.loads(CLAUDE_JSON.read_text()).get("mcpServers", {})
+        claude = {k: scrubber.obj(k, v) for k, v in sorted(servers.items())}
+    codex = ""
+    if CODEX_TOML.exists():
+        blocks, _ = codex_blocks(CODEX_TOML.read_text())
+        codex = "\n".join(scrubber.text(k, blocks[k]) for k in sorted(blocks) if k not in CODEX_SKIP)
+    return claude, codex
+
+
+def load_secrets():
+    return json.loads(SECRETS.read_text()) if SECRETS.exists() else {}
+
+
+def save():
+    sc = Scrubber(load_secrets())
+    claude, codex = current(sc)
+    STORE.mkdir(exist_ok=True)
+    (STORE / "claude-code.json").write_text(json.dumps(claude, indent=2, ensure_ascii=False) + "\n")
+    (STORE / "codex.toml").write_text("# ~/.codex/config.toml 의 [mcp_servers.*] (node_repl, computer-use 제외)\n\n" + codex)
+    SECRETS.write_text(json.dumps(sc.secrets, indent=2, ensure_ascii=False) + "\n")
+    SECRETS.chmod(0o600)
+    # 안전장치: 비밀값이 저장소 파일에 남아 있으면 멈춘다
+    for f in ("claude-code.json", "codex.toml"):
+        body = (STORE / f).read_text()
+        leaked = [k for k, v in sc.secrets.items() if v and v in body]
+        if leaked:
+            sys.exit(f"{f} 에 비밀값이 남아 있어 멈춥니다: {leaked}")
+    if git("check-ignore", "-q", str(SECRETS), check=False).returncode != 0:
+        sys.exit("secrets.local.json 이 .gitignore 에 없습니다. 멈춥니다.")
+    git("add", "-A", "mcp")
+    if not git("diff", "--cached", "--name-only").stdout.strip():
+        print("바뀐 것이 없습니다.")
+        return
+    print(git("diff", "--cached", "--stat").stdout)
+    msg = sys.argv[2] if len(sys.argv) > 2 else "mcp: save"
+    git("commit", "-q", "-m", msg)
+    print("커밋했습니다:", msg)
+    if git("remote", check=False).stdout.strip():
+        r = git("push", "-q", check=False)
+        print("push 완료" if r.returncode == 0 else "push 실패:\n" + r.stderr)
+    print(f"비밀값 {len(sc.secrets)}개는 {SECRETS} 에만 있습니다(git 제외). 다른 컴퓨터로는 직접 옮기세요.")
+
+
+def apply():
+    if git("remote", check=False).stdout.strip():
+        r = git("pull", "-q", "--ff-only", check=False)
+        print("pull 완료" if r.returncode == 0 else "pull 실패(로컬 저장소 내용으로 진행):\n" + r.stderr)
+    secrets = load_secrets()
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    skipped = []
+
+    # Claude Code: claude CLI 로 사용자 범위(user scope)에 추가. 실행 중인 Claude 와 ~/.claude.json 을 동시에 고치지 않기 위해.
+    stored = json.loads((STORE / "claude-code.json").read_text())
+    if shutil.which("claude"):
+        have = json.loads(CLAUDE_JSON.read_text()).get("mcpServers", {}) if CLAUDE_JSON.exists() else {}
+        for name, cfg in stored.items():
+            text, missing = fill(json.dumps(cfg), secrets)
+            if missing:
+                skipped.append(f"claude:{name} (비밀값 없음: {', '.join(missing)})")
+                continue
+            cfg = json.loads(text)
+            if have.get(name) == cfg:
+                continue
+            if name in have:
+                subprocess.run(["claude", "mcp", "remove", "--scope", "user", name], capture_output=True)
+            r = subprocess.run(["claude", "mcp", "add-json", "--scope", "user", name, json.dumps(cfg)], capture_output=True, text=True)
+            print(("  ✓ claude " if r.returncode == 0 else "  ✗ claude ") + name + ("" if r.returncode == 0 else ": " + (r.stderr or r.stdout).strip()))
+    else:
+        print("claude 명령이 없어 Claude Code MCP 는 건너뜁니다.")
+
+    # Codex: config.toml 에서 같은 이름의 블록만 바꾸고 나머지는 그대로. 먼저 백업.
+    stored_blocks, _ = codex_blocks((STORE / "codex.toml").read_text())
+    if stored_blocks:
+        CODEX_TOML.parent.mkdir(parents=True, exist_ok=True)
+        old = CODEX_TOML.read_text() if CODEX_TOML.exists() else ""
+        have_blocks, rest = codex_blocks(old)
+        merged = dict(have_blocks)
+        changed = []
+        for name, block in stored_blocks.items():
+            block, missing = fill(block, secrets)
+            if missing:
+                skipped.append(f"codex:{name} (비밀값 없음: {', '.join(missing)})")
+                continue
+            if merged.get(name) != block:
+                merged[name] = block
+                changed.append(name)
+        if changed:
+            new = "".join(rest).rstrip() + "\n\n" + "\n".join(merged[k] for k in merged)
+            tomllib.loads(new)  # 깨진 TOML 이면 여기서 멈춘다
+            if old:
+                shutil.copy2(CODEX_TOML, CODEX_TOML.with_name(f"config.toml.backup-{stamp}"))
+            CODEX_TOML.write_text(new)
+            for n in changed:
+                print("  ✓ codex", n)
+            if old:
+                print(f"  (기존 Codex 설정 백업: {CODEX_TOML.with_name(f'config.toml.backup-{stamp}')})")
+    for s in skipped:
+        print("  - 건너뜀", s)
+    print("완료. 실행 중인 Claude Code / Codex 는 다시 시작해야 반영됩니다.")
+
+
+def status():
+    sc = Scrubber(load_secrets())
+    claude, codex = current(sc)
+    stored_claude = json.loads((STORE / "claude-code.json").read_text()) if (STORE / "claude-code.json").exists() else {}
+    stored_codex, _ = codex_blocks((STORE / "codex.toml").read_text()) if (STORE / "codex.toml").exists() else ({}, [])
+    now_codex, _ = codex_blocks(codex)
+    diff = []
+    for tool, a, b in (("claude", claude, stored_claude), ("codex", now_codex, stored_codex)):
+        for k in sorted(set(a) | set(b)):
+            if k not in b:
+                diff.append(f"{tool}: 지금만 있음   {k}")
+            elif k not in a:
+                diff.append(f"{tool}: 저장소에만    {k}")
+            elif a[k] != b[k]:
+                diff.append(f"{tool}: 내용 다름     {k}")
+    print("저장소와 다른 점:" if diff else "저장소와 같습니다.")
+    for d in diff:
+        print("  ", d)
+    missing = sorted({n for n in PLACEHOLDER.findall((STORE / "claude-code.json").read_text() + (STORE / "codex.toml").read_text())} - set(load_secrets())) if STORE.exists() else []
+    if missing:
+        print("secrets.local.json 에 없는 비밀값:", ", ".join(missing))
+
+
+if __name__ == "__main__":
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    {"save": save, "apply": apply, "status": status}.get(cmd, lambda: sys.exit(__doc__))()

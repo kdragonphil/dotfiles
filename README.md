@@ -1,46 +1,206 @@
 # dotfiles
 
+Herdr 앱과 코딩 에이전트(Claude Code, Codex) 설정을 여러 Mac에서 똑같이 쓰기 위한 저장소입니다.
+비공개 저장소: <https://github.com/kdragonphil/dotfiles>
+
 | 폴더 | 내용 | 스크립트 |
 |---|---|---|
-| `herdr-app/` | Herdr 앱 개인 설정 | `bin/herdr-app-sync` |
-| `agents/` | 코딩 에이전트 전역 지침 (Claude Code, Codex) | `bin/agents-sync` |
+| `herdr-app/` | Herdr 앱 개인 설정 (레이아웃, 모드, 단축키, 글꼴) | `bin/herdr-app-sync` |
+| `agents/` | 에이전트 전역 지침 (`CLAUDE.md` + SuperClaude, Codex `AGENTS.md`) | `bin/agents-sync` |
+| `mcp/` | MCP 서버 설정 (Claude Code, Codex). 비밀값은 빼고 저장 | `bin/mcp-sync` |
 
-새 컴퓨터: `git clone https://github.com/kdragonphil/dotfiles ~/dotfiles && ~/dotfiles/bin/agents-sync apply && ~/dotfiles/bin/herdr-app-sync apply`
-
-## agents
-
-| 저장소 | 홈 |
-|---|---|
-| `agents/claude/*.md` | `~/.claude/*.md` (`CLAUDE.md`와 그것이 `@`로 불러오는 SuperClaude 파일들) |
-| `agents/codex/AGENTS.md` | `~/.codex/AGENTS.md` |
-
-`bin/agents-sync save ["메시지"]` / `apply` / `status` — 쓰는 법은 herdr-app과 같습니다.
-`apply`는 덮어쓰는 파일을 `~/.claude/backup-before-apply-<시각>/` 등에 먼저 백업합니다.
-메모리(`~/.claude/projects/`), `settings.json`, 로그인 정보는 넣지 않습니다.
-
-## herdr-app
-
-Herdr 데스크톱 앱(`~/.config/herdr-app`)의 **개인 설정만** 보관합니다.
-Herdr 기본 제공 레이아웃·모드(`installed.json`에 있는 것)와 앱이 쓰는 상태 파일은 넣지 않습니다.
+세 스크립트 모두 명령이 같습니다.
 
 | 명령 | 하는 일 |
 |---|---|
-| `bin/herdr-app-sync save ["메시지"]` | 앱 → 저장소 복사, 커밋, (원격이 있으면) push |
-| `bin/herdr-app-sync apply` | (원격이 있으면) pull, 저장소 → 앱 복사. 덮어쓰는 파일은 `~/.config/herdr-app/backup-before-apply-<시각>/`에 백업 |
-| `bin/herdr-app-sync status` | 개인 설정으로 잡히는 목록과 저장소와 다른 점 |
+| `save ["커밋 메시지"]` | 지금 컴퓨터의 설정 → 저장소로 복사, 커밋, push |
+| `apply` | `git pull` → 저장소 설정을 이 컴퓨터에 적용. 덮어쓰는 파일은 먼저 백업 |
+| `status` | 지금 컴퓨터와 저장소의 차이만 보여 줌 (아무것도 바꾸지 않음) |
 
-### 새 컴퓨터에서
-1. Herdr 앱 설치 후 한 번 실행 (`~/.config/herdr-app` 생성)
-2. `git clone <이 저장소> ~/dotfiles && ~/dotfiles/bin/herdr-app-sync apply`
-3. `github` / `issues` / `issue-agent` 모드용: `brew install gh && gh auth login`
+---
 
-### 들어가는 것
-- `layouts/` : 기본 제공이 아닌 레이아웃(+ 미리보기 svg/png)
-- `mods/` : 기본 제공이 아닌 모드 (`gpui-kit.d.ts`, `jsconfig.json`은 앱이 다시 만들므로 제외)
-- `keys.json`, `settings.json`, `programs.json`(있으면), `fonts/`, 기본 제공이 아닌 `themes/*.json`
+## 1. 새 컴퓨터 처음 설정하기
 
-### 안 들어가는 것
-- `layouts/.state/` (패널 크기 등 클릭 상태, 자주 바뀜), `view.json`, `shared.json`, `data/`, 창 위치
-- 스페이스·탭·ssh 머신 목록 (컴퓨터마다 다름)
+### 1-1. 기본 도구
+```sh
+# Homebrew (없으면)
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
-복사 방식인 이유: 앱이 설정 화면에서 `settings.json` 등을 새로 쓸 때 심볼릭 링크가 일반 파일로 바뀔 수 있어서입니다.
+brew install git gh node python        # node: npx 로 도는 MCP 서버, python3: 동기화 스크립트(3.11 이상)
+curl -LsSf https://astral.sh/uv/install.sh | sh   # uvx: serena MCP 서버
+gh auth login                          # 이 비공개 저장소 clone, github/issues 모드에 필요
+```
+
+### 1-2. 코딩 에이전트
+```sh
+brew install --cask claude-code   # 또는 npm i -g @anthropic-ai/claude-code
+brew install codex                # 또는 npm i -g @openai/codex
+claude                            # 한 번 실행해서 로그인
+codex                             # 한 번 실행해서 로그인
+```
+
+### 1-3. Herdr 앱 설치
+```sh
+curl -fsSL https://releases.herdr.dev/app/install.sh | sh
+herdr-app                          # 한 번 실행 → ~/.config/herdr-app 이 만들어짐
+hc --version                       # 함께 설치되는 herdr-core CLI 확인
+```
+- 앱을 꺼도 터미널과 에이전트는 herdr-core(`hc`)에서 계속 돌아갑니다.
+- 업데이트는 앱이 알아서 내려받고 재시작을 권합니다.
+
+### 1-4. 이 저장소 받아서 한 번에 적용
+```sh
+git clone https://github.com/kdragonphil/dotfiles ~/dotfiles
+~/dotfiles/bin/agents-sync apply      # ~/.claude/*.md, ~/.codex/AGENTS.md
+~/dotfiles/bin/mcp-sync apply         # MCP 서버 (비밀값은 1-5 참고)
+~/dotfiles/bin/herdr-app-sync apply   # Herdr 레이아웃·모드·단축키·글꼴, my-layout 으로 전환
+```
+적용 뒤 실행 중인 Claude Code / Codex 는 다시 시작하세요. Herdr 앱은 바로 반영됩니다.
+
+### 1-5. 비밀값 옮기기 (MCP)
+API 키나 개인 URL은 git 에 올리지 않고 `mcp/secrets.local.json` 에만 둡니다(`.gitignore`).
+새 컴퓨터에서는 둘 중 하나:
+- 원래 컴퓨터의 `~/dotfiles/mcp/secrets.local.json` 을 AirDrop 등으로 같은 위치에 복사한 뒤 `mcp-sync apply` 다시 실행
+- 또는 직접 만들기: `mcp-sync status` 가 필요한 이름을 알려 줍니다.
+  ```json
+  { "magic-ui_1": "<21st.dev API 키>", "n8n_1": "<n8n MCP URL 의 UUID>" }
+  ```
+비밀값이 없는 서버는 `apply` 에서 건너뛰고 이름을 알려 줍니다.
+
+그 밖에 환경 변수가 필요한 MCP 서버:
+- `tavily`: `TAVILY_API_KEY` (https://app.tavily.com) — `~/.zshrc` 에 `export TAVILY_API_KEY=...`
+- `magic` (Claude Code 쪽): 21st.dev API 키가 필요합니다. https://21st.dev/mcp
+
+---
+
+## 2. 평소에 쓰는 법
+
+설정을 바꾼 컴퓨터에서 `save`, 다른 컴퓨터에서 `apply`.
+```sh
+~/dotfiles/bin/herdr-app-sync save "Files 메뉴 수정"
+~/dotfiles/bin/agents-sync save
+~/dotfiles/bin/mcp-sync save
+
+# 다른 컴퓨터에서
+~/dotfiles/bin/herdr-app-sync apply
+```
+- 자동 동기화가 아닙니다. 양쪽에서 각각 고친 뒤 `save` 하면 push 가 거절되니, 먼저 `apply`(=pull) 하고 `save` 하세요.
+- 무엇이 다른지만 보려면 `status`.
+- 백업 위치: `~/.config/herdr-app/backup-before-apply-<시각>/`, `~/.claude/backup-before-apply-<시각>/`,
+  `~/.codex/backup-before-apply-<시각>/`, `~/.codex/config.toml.backup-<시각>`
+
+---
+
+## 3. 무엇이 들어 있나
+
+### herdr-app/
+`~/.config/herdr-app` 에서 **Herdr 가 기본 제공하지 않는 것만** 담습니다(`installed.json` 기준). 새로 만든 모드·레이아웃은 `save` 때 저절로 들어갑니다.
+
+| 항목 | 내용 |
+|---|---|
+| `layouts/my-layout.json` | 기본 `main` 레이아웃 복제본. Files 패널이 `my-files` |
+| `layouts/board.json`, `main-timer.json` | 에이전트 보드, 탭별 작업 타이머 레이아웃 |
+| `mods/my-files`, `my-files-actions` | Files 패널: 오른쪽 클릭(경로 복사, Finder에서 보기, 이름 변경, 휴지통), Finder 에서 끌어다 놓기, 이미지 미리보기 |
+| `mods/agent-board`, `timer-tabs`, `git-graph`, `github`, `issues`, `issue-agent` | 개인 모드 (`github`/`issues`/`issue-agent` 는 `gh` 필요) |
+| `keys.json`, `settings.json`, `fonts/` | 단축키, 글꼴(D2Coding) 등 |
+
+넣지 않는 것: `layouts/.state/`(패널 크기 등 클릭 상태), `view.json`, `shared.json`, `data/`, `cache/`, 스페이스·탭·ssh 머신 목록.
+
+> 기본 제공 레이아웃·모드(`main`, `files` 등)는 앱이 켤 때마다 원래대로 덮어씁니다.
+> 고치려면 복제해서 고치세요: `herdr-app do layout.clone '{"name":"main","as":"my-layout"}'`,
+> `herdr-app do mod.clone '{"name":"files","as":"my-files"}'`
+
+### agents/
+| 저장소 | 홈 |
+|---|---|
+| `agents/claude/*.md` | `~/.claude/CLAUDE.md` 와 그것이 `@` 로 불러오는 SuperClaude 파일들 |
+| `agents/codex/AGENTS.md` | `~/.codex/AGENTS.md` |
+
+핵심 규칙: 답변은 한국어 / 다른 에이전트에게 맡길 때는 먼저 `hc --skill` 을 읽고 따른다.
+메모리(`~/.claude/projects/`), `settings.json`, 로그인 정보는 넣지 않습니다.
+
+### mcp/
+| 파일 | 내용 |
+|---|---|
+| `mcp/claude-code.json` | `~/.claude.json` 의 `mcpServers` (사용자 범위) |
+| `mcp/codex.toml` | `~/.codex/config.toml` 의 `[mcp_servers.*]` (ChatGPT 앱이 관리하는 `node_repl`, `computer-use` 제외) |
+| `mcp/secrets.local.json` | 비밀값. **git 에 올라가지 않음** |
+
+- `apply` 는 저장소에 있는 서버만 추가·갱신하고, 그 컴퓨터에만 있는 서버는 지우지 않습니다.
+- Claude Code 는 `claude mcp add-json --scope user` 로 넣고(실행 중인 Claude 가 쓰는 `~/.claude.json` 을 직접 고치지 않으려고), Codex 는 `config.toml` 에서 같은 이름 블록만 바꿉니다.
+- `save` 는 비밀값이 저장소 파일에 남아 있거나 `secrets.local.json` 이 `.gitignore` 에서 빠져 있으면 커밋하지 않고 멈춥니다.
+- `filesystem` 서버의 `/Volumes/VEGA/Data` 처럼 이 컴퓨터 경로가 들어간 서버는 다른 컴퓨터에서 경로를 맞춰야 합니다.
+
+---
+
+## 4. Herdr 사용 메모
+
+### 단축키
+| 키 | 동작 |
+|---|---|
+| `⌘ /` | 단축키 목록 (글자를 쳐서 찾기) |
+| `⌘ B` | 사이드바 열고 닫기 |
+| `ctrl ⇧ L` / `⌘ ⇧ L` | 레이아웃 전환 (my-layout ↔ board ↔ main-timer …) |
+| `⌘ ⇧ P` | 명령 팔레트 |
+| `⌘ T` / `⌘ D` / `⌘ ⇧ D` | 새 탭 / 오른쪽 분할 / 아래 분할 |
+
+### 터미널에서 herdr-core 다루기 (`hc`)
+```sh
+hc ls            # core 에서 도는 터미널 목록
+hc attach t5     # 그 터미널에 붙기 (빠져나오기: ctrl+\)
+hc wait t5       # 일이 끝날 때까지 기다리기
+hc --skill       # 에이전트용 hc 매뉴얼
+```
+
+### 앱을 말로 바꾸기
+에이전트에게 이렇게 시키면 됩니다.
+```
+~/.config/herdr-app/AGENTS.md를 읽고, 이 앱에서 무엇을 바꿀 수 있는지 다섯 줄로 알려 줘.
+한글 글자 사이가 벌어져 보여. 터미널 글꼴을 D2Coding으로 바꿔 줘.
+탭마다 에이전트가 일한 시간을 타이머로 보여 줘.
+needs you, working, done 세 칸에 에이전트를 카드로 보여 주는 보드 레이아웃을 새로 만들고 그 레이아웃으로 바꿔 줘.
+```
+바꾼 뒤에는 `~/dotfiles/bin/herdr-app-sync save`.
+
+### 남이 만든 레이아웃·모드 가져오기 (herdr.dev/layouts, herdr.dev/mods)
+```
+Read ~/.config/herdr-app/AGENTS.md, then add this layout: herdr.dev/layouts/herdrdev/pasture
+Read ~/.config/herdr-app/AGENTS.md, then add this mod: herdr.dev/mods/herdrdev/tmux-prefix
+```
+모드는 명령 실행·네트워크 접근을 할 수 있는 JavaScript 입니다. 에이전트가 먼저 읽고 확인하게 하세요.
+
+### 에이전트가 에이전트를 부리기
+```
+hc --skill을 읽고, Codex 리뷰어를 하나 띄워서 server 폴더를 읽기만 하며 검토하게 해 줘. 리뷰어가 끝나면 결과를 세 줄로 알려 줘.
+```
+- 띄우는 형식: `hc run --bg --name <이름> --cwd <저장소> <에이전트> "<첫 작업>"`, 끝나면 `hc send $HC_TERMINAL_ID` 로 보고.
+- Codex 안에서 `hc send` 로 결과를 돌려보내려면 Codex 샌드박스가 herdr-core 소켓 폴더에 쓸 수 있어야 합니다.
+  `~/.codex/config.toml`:
+  ```toml
+  [sandbox_workspace_write]
+  writable_roots = ["/Users/<사용자>/.config/herdr"]   # herdr.sock 이 있는 폴더
+  ```
+
+### 다른 컴퓨터도 한 화면에
+앱: 사이드바 아래 **Add machine** → `user@host`(SSH 로 닿는 주소). 터미널에서는:
+```sh
+hc machine add <ssh 호스트> --name macbook-air --install
+hc ls     # macbook-air/t1 처럼 다른 컴퓨터의 터미널도 한 목록에
+```
+(ssh 머신 목록은 컴퓨터마다 다르므로 이 저장소에 넣지 않습니다.)
+
+### 휴대폰에서 답하기: Ovis (선택)
+```sh
+curl -fsSL https://bun.sh/install | bash        # Bun 1.4 이상
+git clone https://github.com/devswha/ovis.git
+cd ovis && bun install
+OVIS_RUNTIME=herdr-core OVIS_TELEMETRY=0 bun run start   # → http://127.0.0.1:7317
+```
+- `OVIS_RUNTIME=herdr-core`: Herdr 앱(herdr-core)에 붙기. 빼면 Herdr TUI 서버를 찾습니다.
+- `OVIS_TELEMETRY=0`: 익명 사용 통계 끄기.
+- 포트 7317 은 내 컴퓨터(127.0.0.1)에서만 열고 인터넷에 직접 열지 마세요.
+- 휴대폰: 두 기기 모두 Tailscale → `tailscale serve --bg --https=443 http://127.0.0.1:7317` → Ovis 설정 Phone & devices 의 QR. 알림은 HTTPS 에서만.
+
+### 참고
+- 가이드: <https://herdr.dev/guide/> · 앱이 에이전트에게 주는 전체 설명: `~/.config/herdr-app/AGENTS.md`
+- 레이아웃/모드 모음: <https://herdr.dev/layouts>, <https://herdr.dev/mods> · 질문: Discord <https://discord.gg/PsgRfzmUDg>
