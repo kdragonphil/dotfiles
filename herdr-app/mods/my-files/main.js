@@ -1,9 +1,9 @@
 // A lazy file browser for the focused pane's folder, with bounded read-only previews.
 // my-files: right-click a row (or empty space) for copy path / reveal / rename / trash (mod my-files-actions);
 // drop files from Finder onto a folder row (or empty space) to copy them in.
-import { View, div, svg } from "gpui-kit";
+import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, openOverlay, notify, shared } from "herdr";
+import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, openOverlay, notify, shared, appHome } from "herdr";
 
 function location() {
   const space = spaces().find(s => s.active), f = focused();
@@ -14,6 +14,7 @@ function location() {
 const key = () => JSON.stringify(location());
 const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", toml: "yaml", jsonc: "json", svelte: "html", vue: "html" };
 const PER_FOLDER = 500, TOTAL = 5000;
+const IMAGES = new Set(["png", "jpg", "jpeg", "webp", "gif", "bmp", "ico", "tif", "tiff"]);
 
 async function directory(path, on) {
   if (!on && window()?.platform === "windows") {
@@ -157,9 +158,26 @@ export default class Files extends View {
   }
 
   show(path, cx) {
-    this.code?.release(); this.code = null; this.file = path; this.fileError = null;
+    this.code?.release(); this.code = null; this.file = path; this.fileError = null; this.picture = null; this.pictureInfo = null;
     if (!path || !cx) return;
     const context = this.context, root = this.root, on = this.on;
+    const kind = path.includes(".") ? path.split(".").pop().toLowerCase() : "";
+    if (IMAGES.has(kind)) {
+      // image() only loads paths inside the app folder, so preview a copy in cache/my-files/ (one at a time).
+      if (on) { this.fileError = "다른 머신의 이미지는 미리보기할 수 없습니다"; return; }
+      const rel = `cache/my-files/${Date.now()}.${kind}`, src = `${root}/${path}`;
+      cx.spawn(async cx => {
+        const script = 'd=$(dirname "$2"); mkdir -p "$d" && rm -f "$d"/* && cp "$1" "$2" || exit 1; sips -g pixelWidth -g pixelHeight "$1" 2>/dev/null | awk \'/pixelWidth/{w=$2}/pixelHeight/{h=$2}END{print w+0, h+0}\'; du -h "$1" | cut -f1';
+        const r = await exec("sh", ["-c", script, "my-files", src, `${appHome()}/${rel}`]).catch(e => ({ code: 1, stderr: String(e) }));
+        if (this.file !== path || !this.current(context)) return;
+        if (r.code !== 0) { this.fileError = "이미지를 읽을 수 없습니다"; cx.notify(); return; }
+        const [dims, size] = r.stdout.trim().split("\n"), [w, h] = dims.split(" ").map(Number);
+        this.picture = { rel, w, h };
+        this.pictureInfo = [w && h ? `${w}×${h}` : "", size].filter(Boolean).join(" · ");
+        cx.notify();
+      });
+      return;
+    }
     cx.spawn(async cx => {
       try {
         const text = await readTextFile(`${root}/${path}`, { on });
@@ -194,12 +212,21 @@ export default class Files extends View {
     return out;
   }
 
+  // image() stretches to its box, so size the box to the picture's aspect within the panel.
+  fitted() {
+    const { rel, w, h } = this.picture, size = this.size ?? { width: 360, height: 600 };
+    const room = { w: Math.max(40, size.width - 22), h: Math.max(40, size.height - 42 - 20 - 30) };
+    if (!w || !h) return image(rel).w(room.w).h(room.h);
+    const k = Math.min(room.w / w, room.h / h, 1);
+    return image(rel).w(Math.floor(w * k)).h(Math.floor(h * k)).rounded(4);
+  }
+
   render(cx) {
     if (key() !== this.context?.key) this.refresh(cx);
     const changed = shared("my-files.changed");
     if (changed !== this.changed) { this.changed = changed; this.refresh(cx); }
     const t = theme();
-    return v_flex().id("files").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
+    return v_flex().id("files").on_size_change((size, cx) => { if (size.width !== this.size?.width || size.height !== this.size?.height) { this.size = size; cx.notify(); } }).size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .when(Boolean(this.file), el => el.child(div().id("files-back").w(20).cursor_pointer().text_color(t.muted).on_click((_e, cx) => { this.show(null); cx.notify(); }).child("←")))
         .child(div().font_semibold().child("Files"))
@@ -210,6 +237,10 @@ export default class Files extends View {
         .children(this.rows("", 0, [], t))
         .when(Boolean(this.error) || !this.entries.get("")?.length, el => el.child(div().p(8).text_size(12).text_color(t.dim).child(this.error || (this.loading ? "Loading files…" : this.root ? "No files" : "No folder"))))
         .when(this.limited, el => el.child(div().p(8).text_size(11).text_color(t.dim).child("File list limited to 500 entries per folder and 5,000 total")))))
-      .when(Boolean(this.file), el => el.child(this.code ? Editor.new(this.code).flex_1().min_h(0) : div().p(12).text_color(t.dim).child(this.fileError || "Loading file…")));
+      .when(Boolean(this.file) && Boolean(this.picture), el => el.child(v_flex().flex_1().min_h(0).p(10).gap(8)
+        .on_mouse_down("right", (_e, cx) => this.menu(this.file, false, cx))
+        .child(h_flex().flex_1().min_h(0).w_full().items_center().justify_center().child(this.fitted()))
+        .when(Boolean(this.pictureInfo), el => el.child(div().flex_none().text_size(11).text_color(t.dim).text_center().child(this.pictureInfo)))))
+      .when(Boolean(this.file) && !this.picture, el => el.child(this.code ? Editor.new(this.code).flex_1().min_h(0) : div().p(12).text_color(t.dim).child(this.fileError || "Loading file…")));
   }
 }
