@@ -22,13 +22,6 @@ args = [
     "/Volumes/VEGA/Data",
 ]
 
-[mcp_servers.magic]
-command = "npx"
-args = [
-    "-y",
-    "@21st-dev/magic",
-]
-
 [mcp_servers.magic-ui]
 command = "npx"
 args = [
@@ -76,11 +69,4 @@ args = [
     "start-mcp-server",
     "--context",
     "ide-assistant",
-]
-
-[mcp_servers.tavily]
-command = "npx"
-args = [
-    "-y",
-    "tavily-mcp@0.1.2",
 ]

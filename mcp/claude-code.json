@@ -17,15 +17,6 @@
     ],
     "env": {}
   },
-  "magic": {
-    "type": "stdio",
-    "command": "npx",
-    "args": [
-      "-y",
-      "@21st-dev/magic"
-    ],
-    "env": {}
-  },
   "morphllm-fast-apply": {
     "type": "stdio",
     "command": "npx",
@@ -63,15 +54,6 @@
       "start-mcp-server",
       "--context",
       "ide-assistant"
-    ],
-    "env": {}
-  },
-  "tavily": {
-    "type": "stdio",
-    "command": "npx",
-    "args": [
-      "-y",
-      "tavily-mcp@0.1.2"
     ],
     "env": {}
   }
