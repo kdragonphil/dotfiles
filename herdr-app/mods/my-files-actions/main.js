@@ -19,7 +19,9 @@ async function sh(script, args, on) {
 
 async function copyText(text, label) {
   try {
-    await sh('printf %s "$1" | pbcopy', [text], null);
+    // pbcopy 는 UTF-8 로캘이 없으면 한글 등 비 ASCII 글자가 섞인 글을 빈 값으로 복사한다
+    text = text.normalize("NFC");
+    await sh('LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8; export LC_ALL LANG; printf %s "$1" | pbcopy', [text], null);
     notify({ title: `${label} 복사됨`, body: text, level: "success", timeout: 2500 });
   } catch (e) { notify({ title: "복사 실패", body: String(e.message ?? e), level: "error" }); }
 }
