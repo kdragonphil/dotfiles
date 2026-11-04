@@ -63,11 +63,11 @@ API 키나 개인 URL은 git 에 올리지 않고 `mcp/secrets.local.json` 에�
 - 원래 컴퓨터의 `~/dotfiles/mcp/secrets.local.json` 을 AirDrop 등으로 같은 위치에 복사한 뒤 `mcp-sync apply` 다시 실행
 - 또는 직접 만들기: `mcp-sync status` 가 필요한 이름을 알려 줍니다.
   ```json
-  { "magic-ui_1": "<21st.dev API 키>", "n8n_1": "<n8n MCP URL 의 UUID>" }
+  { "n8n_1": "<n8n MCP URL 의 UUID>" }
   ```
 비밀값이 없는 서버는 `apply` 에서 건너뛰고 이름을 알려 줍니다.
 
-`magic`(Claude Code)·`tavily` 서버는 쓰지 않아 뺐습니다. 다른 컴퓨터에 남아 있으면 `claude mcp remove --scope user magic` / `tavily` 로 지우세요(`apply` 는 지우지 않습니다).
+`magic`·`magic-ui`·`tavily` 서버는 쓰지 않아 뺐습니다. 다른 컴퓨터에 남아 있으면 Claude Code 는 `claude mcp remove --scope user magic` / `tavily`, Codex 는 `~/.codex/config.toml` 의 해당 `[mcp_servers.*]` 블록을 지우세요(`apply` 는 지우지 않습니다).
 
 ---
 
