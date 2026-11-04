@@ -1,5 +1,23 @@
 # dotfiles
 
+| 폴더 | 내용 | 스크립트 |
+|---|---|---|
+| `herdr-app/` | Herdr 앱 개인 설정 | `bin/herdr-app-sync` |
+| `agents/` | 코딩 에이전트 전역 지침 (Claude Code, Codex) | `bin/agents-sync` |
+
+새 컴퓨터: `git clone https://github.com/kdragonphil/dotfiles ~/dotfiles && ~/dotfiles/bin/agents-sync apply && ~/dotfiles/bin/herdr-app-sync apply`
+
+## agents
+
+| 저장소 | 홈 |
+|---|---|
+| `agents/claude/*.md` | `~/.claude/*.md` (`CLAUDE.md`와 그것이 `@`로 불러오는 SuperClaude 파일들) |
+| `agents/codex/AGENTS.md` | `~/.codex/AGENTS.md` |
+
+`bin/agents-sync save ["메시지"]` / `apply` / `status` — 쓰는 법은 herdr-app과 같습니다.
+`apply`는 덮어쓰는 파일을 `~/.claude/backup-before-apply-<시각>/` 등에 먼저 백업합니다.
+메모리(`~/.claude/projects/`), `settings.json`, 로그인 정보는 넣지 않습니다.
+
 ## herdr-app
 
 Herdr 데스크톱 앱(`~/.config/herdr-app`)의 **개인 설정만** 보관합니다.

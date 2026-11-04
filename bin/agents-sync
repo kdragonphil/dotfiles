@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""코딩 에이전트 전역 지침 파일을 ~/dotfiles/agents 와 동기화한다.
+
+  agents-sync save ["메시지"]  홈 → 저장소로 복사하고 커밋(원격이 있으면 push)
+  agents-sync apply            (원격이 있으면 pull 후) 저장소 → 홈으로 복사. 덮어쓰는 파일은 먼저 백업
+  agents-sync status           저장소와 다른 점
+
+대상: ~/.claude/*.md (CLAUDE.md와 그것이 @로 불러오는 SuperClaude 파일), ~/.codex/AGENTS.md
+(메모리, settings.json, 인증 정보는 넣지 않는다.)
+"""
+import filecmp, os, shutil, subprocess, sys, time
+from pathlib import Path
+
+HOME = Path.home()
+REPO = Path(__file__).resolve().parent.parent
+STORE = REPO / "agents"
+# 저장소 안 폴더 → 홈 안 폴더, 고르는 패턴
+TARGETS = {"claude": (HOME / ".claude", "*.md"), "codex": (HOME / ".codex", "AGENTS.md")}
+
+
+def git(*args, check=True):
+    return subprocess.run(["git", "-C", str(REPO), *args], check=check, text=True, capture_output=True)
+
+
+def pairs(from_home=True):
+    """(홈 경로, 저장소 경로) 목록. from_home: 홈 기준으로 고를지, 저장소 기준으로 고를지."""
+    out = []
+    for name, (home_dir, pattern) in TARGETS.items():
+        base = home_dir if from_home else STORE / name
+        for f in sorted(base.glob(pattern)) if base.is_dir() else []:
+            if f.is_file():
+                out.append((home_dir / f.name, STORE / name / f.name))
+    return out
+
+
+def save():
+    if STORE.exists():
+        shutil.rmtree(STORE)
+    for home, repo in pairs(True):
+        repo.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(home, repo)
+    git("add", "-A", "agents")
+    if not git("diff", "--cached", "--name-only").stdout.strip():
+        print("바뀐 것이 없습니다.")
+        return
+    print(git("diff", "--cached", "--stat").stdout)
+    msg = sys.argv[2] if len(sys.argv) > 2 else f"agents: save from {os.uname().nodename.split('.')[0]}"
+    git("commit", "-q", "-m", msg)
+    print("커밋했습니다:", msg)
+    if git("remote", check=False).stdout.strip():
+        r = git("push", "-q", check=False)
+        print("push 완료" if r.returncode == 0 else "push 실패:\n" + r.stderr)
+
+
+def apply():
+    if git("remote", check=False).stdout.strip():
+        r = git("pull", "-q", "--ff-only", check=False)
+        print("pull 완료" if r.returncode == 0 else "pull 실패(로컬 저장소 내용으로 진행):\n" + r.stderr)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    changed = 0
+    for home, repo in pairs(False):
+        if home.exists() and filecmp.cmp(home, repo, shallow=False):
+            continue
+        if home.exists():
+            backup = home.parent / f"backup-before-apply-{stamp}" / home.name
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(home, backup)
+        home.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(repo, home)
+        changed += 1
+        print("  ←", home)
+    print(f"{changed}개 파일 적용." + (" 덮어쓴 파일은 각 폴더의 backup-before-apply-%s/ 에 백업했습니다." % stamp if changed else ""))
+
+
+def status():
+    home_side = {r: h for h, r in pairs(True)}
+    repo_side = {r: h for h, r in pairs(False)}
+    diff = []
+    for repo in sorted(set(home_side) | set(repo_side)):
+        home = home_side.get(repo) or repo_side.get(repo)
+        if repo not in repo_side:
+            diff.append(f"홈에만 있음   {home}")
+        elif repo not in home_side:
+            diff.append(f"저장소에만    {home}")
+        elif not filecmp.cmp(home, repo, shallow=False):
+            diff.append(f"내용 다름     {home}")
+    print("저장소와 다른 점:" if diff else "저장소와 같습니다.")
+    for d in diff:
+        print("  ", d)
+
+
+if __name__ == "__main__":
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    {"save": save, "apply": apply, "status": status}.get(cmd, lambda: sys.exit(__doc__))()
