@@ -22,14 +22,6 @@ args = [
     "/Volumes/VEGA/Data",
 ]
 
-[mcp_servers.magic-ui]
-command = "npx"
-args = [
-    "-y",
-    "@21st-dev/magic@latest",
-    'API_KEY="{{SECRET:magic-ui_1}}"',
-]
-
 [mcp_servers.morphllm-fast-apply]
 command = "npx"
 args = [
