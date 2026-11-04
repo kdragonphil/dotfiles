@@ -67,9 +67,7 @@ API 키나 개인 URL은 git 에 올리지 않고 `mcp/secrets.local.json` 에�
   ```
 비밀값이 없는 서버는 `apply` 에서 건너뛰고 이름을 알려 줍니다.
 
-그 밖에 환경 변수가 필요한 MCP 서버:
-- `tavily`: `TAVILY_API_KEY` (https://app.tavily.com) — `~/.zshrc` 에 `export TAVILY_API_KEY=...`
-- `magic` (Claude Code 쪽): 21st.dev API 키가 필요합니다. https://21st.dev/mcp
+`magic`(Claude Code)·`tavily` 서버는 쓰지 않아 뺐습니다. 다른 컴퓨터에 남아 있으면 `claude mcp remove --scope user magic` / `tavily` 로 지우세요(`apply` 는 지우지 않습니다).
 
 ---
 
