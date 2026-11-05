@@ -4,5 +4,6 @@
     "enabled": true
   },
   "font": "D2Coding",
-  "minimum_contrast": 1.0
+  "minimum_contrast": 1,
+  "appearance": "dark"
 }

@@ -75,5 +75,8 @@
   },
   "layout:main-timer": {
     "cmd-g": "timer-tabs.graph"
+  },
+  "mod:my-files": {
+    "cmd-s": "my-files.save"
   }
 }

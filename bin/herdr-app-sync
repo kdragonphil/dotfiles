@@ -15,7 +15,7 @@ from pathlib import Path
 APP = Path.home() / ".config" / "herdr-app"
 REPO = Path(__file__).resolve().parent.parent
 STORE = REPO / "herdr-app"
-SKIP_NAMES = {"gpui-kit.d.ts", "jsconfig.json", ".DS_Store", "node_modules"}
+SKIP_NAMES = {"gpui-kit.d.ts", "jsconfig.json", ".DS_Store", "node_modules", ".cache"}  # .cache: 미리보기한 파일 사본(preview-plus)
 SHIPPED_THEMES = {"atom-one-dark.json", "win98.json"}  # Herdr가 매번 다시 쓰는 테마
 
 

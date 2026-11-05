@@ -1,9 +1,9 @@
-// A lazy file browser for the focused pane's folder, with bounded read-only previews.
+// A lazy file browser for the focused pane's folder; local text files up to 400 KB open editable (cmd-s / 저장), others read-only.
 // my-files: right-click a row (or empty space) for copy path / reveal / rename / trash (mod my-files-actions);
 // drop files from Finder onto a folder row (or empty space) to copy them in.
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, openOverlay, notify, shared, appHome } from "herdr";
+import { spaces, panes, focused, exec, readTextFile, writeTextFile, nextCommand, watchFolder, theme, settings, window, openOverlay, notify, shared, appHome } from "herdr";
 
 function location() {
   const space = spaces().find(s => s.active), f = focused();
@@ -13,7 +13,7 @@ function location() {
 }
 const key = () => JSON.stringify(location());
 const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", toml: "yaml", jsonc: "json", svelte: "html", vue: "html" };
-const PER_FOLDER = 500, TOTAL = 5000;
+const PER_FOLDER = 500, TOTAL = 5000, EDIT_LIMIT = 400000;
 const IMAGES = new Set(["png", "jpg", "jpeg", "webp", "gif", "bmp", "ico", "tif", "tiff"]);
 
 async function directory(path, on) {
@@ -46,6 +46,30 @@ export default class Files extends View {
     this.changed = shared("my-files.changed");
     this.refresh(cx);
     cx.timer.every(10000, cx => this.refresh(cx));
+    cx.spawn(async cx => { for (;;) { const c = await nextCommand(); if (c === "save") this.save(cx); cx.notify(); } });
+  }
+
+  // Saves the open text file. writeTextFile refuses if the file changed on disk since it was read.
+  save(cx) {
+    if (!this.code || !this.editable || this.saving) return;
+    const text = this.code.value(), full = `${this.root}/${this.file}`, code = this.code;
+    if (text === this.original) return;
+    this.saving = true;
+    cx.spawn(async cx => {
+      try {
+        await writeTextFile(full, text, this.original);
+        if (this.code === code) { this.original = text; this.dirty = this.code.value() !== text; this.discard = false; }
+        notify({ title: "저장됨", body: this.file, level: "success", timeout: 2000 });
+      } catch (e) {
+        notify({ title: "저장 실패", body: /stale|match|changed/i.test(String(e)) ? "다른 곳에서 파일이 바뀌었습니다. 내용을 복사해 두고 파일을 다시 여세요." : String(e), level: "error" });
+      } finally { this.saving = false; cx.notify(); }
+    });
+  }
+
+  // Back to the tree; with unsaved edits the first press only warns.
+  back(cx) {
+    if (this.dirty && !this.discard) { this.discard = true; cx.notify(); return; }
+    this.show(null); cx.notify();
   }
 
   menu(path, dir, cx) {
@@ -102,12 +126,15 @@ export default class Files extends View {
   refresh(cx) {
     const { cwd, on } = location(), next = key();
     if (next !== this.context?.key) {
-      if (this.context) this.saved.set(this.context.key, { folders: this.folders, file: this.file });
+      const draft = this.dirty && this.code ? { file: this.file, code: this.code, original: this.original } : null;
+      if (draft) this.code = null; // keep the unsaved editor alive instead of releasing it
+      if (this.context) this.saved.set(this.context.key, { folders: this.folders, file: this.file, draft });
       const saved = this.saved.get(next);
       this.context = { key: next, cwd, on }; this.root = cwd; this.on = on; this.entries = new Map(); this.folders = new Set(saved?.folders);
       this.pending = new Set(); this.marks = {}; this.show(null); this.watched = null; this.error = null; this.limited = false;
       this.loading = false;
-      if (saved?.file) this.show(saved.file, cx);
+      if (saved?.draft) { this.file = saved.draft.file; this.code = saved.draft.code; this.original = saved.draft.original; this.editable = true; this.dirty = true; }
+      else if (saved?.file) this.show(saved.file, cx);
     }
     if (!cwd || this.loading) return;
     const context = this.context;
@@ -158,7 +185,7 @@ export default class Files extends View {
   }
 
   show(path, cx) {
-    this.code?.release(); this.code = null; this.file = path; this.fileError = null; this.picture = null; this.pictureInfo = null;
+    this.code?.release(); this.code = null; this.file = path; this.fileError = null; this.original = null; this.editable = false; this.dirty = false; this.discard = false; this.picture = null; this.pictureInfo = null;
     if (!path || !cx) return;
     const context = this.context, root = this.root, on = this.on;
     const kind = path.includes(".") ? path.split(".").pop().toLowerCase() : "";
@@ -185,10 +212,14 @@ export default class Files extends View {
         if (text === null) { this.fileError = "This file is no longer available"; return; }
         if (text.includes("\0")) { this.fileError = "Binary file · no text preview"; return; }
         const t = theme(), ext = path.includes(".") ? path.split(".").pop() : "txt";
-        this.code = EditorState.new({ language: LANG[ext] ?? ext, readonly: true,
-          value: text.length > 400000 ? text.slice(0, 400000) + "\n… (file truncated)" : text,
+        // Editable when it's on this Mac and shown whole; otherwise a read-only preview.
+        this.editable = !on && text.length <= EDIT_LIMIT; this.original = text;
+        this.code = EditorState.new({ language: LANG[ext] ?? ext, readonly: !this.editable, soft_wrap: ext === "md" || ext === "txt",
+          value: text.length > EDIT_LIMIT ? text.slice(0, EDIT_LIMIT) + "\n… (file truncated)" : text,
           font_family: settings().font_family, font_size: 12,
           syntax: { keyword: t.ansi5, string: t.ansi2, comment: t.dim, function: t.ansi4, type: t.ansi3, number: t.ansi1, constant: t.ansi6 } });
+        const code = this.code;
+        code.on("change", (_e, cx) => { if (this.code !== code) return; const d = code.value() !== this.original; if (d !== this.dirty) { this.dirty = d; this.discard = false; cx.notify(); } });
       } catch { if (this.file === path && this.current(context)) this.fileError = "Cannot preview this file (binary, too large, or unreadable)"; }
       finally { cx.notify(); }
     });
@@ -228,9 +259,13 @@ export default class Files extends View {
     const t = theme();
     return v_flex().id("files").on_size_change((size, cx) => { if (size.width !== this.size?.width || size.height !== this.size?.height) { this.size = size; cx.notify(); } }).size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
-        .when(Boolean(this.file), el => el.child(div().id("files-back").w(20).cursor_pointer().text_color(t.muted).on_click((_e, cx) => { this.show(null); cx.notify(); }).child("←")))
+        .when(Boolean(this.file), el => el.child(div().id("files-back").w(20).cursor_pointer().text_color(t.muted).on_click((_e, cx) => this.back(cx)).child("←")))
         .child(div().font_semibold().child("Files"))
-        .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim).child(this.file ?? this.root?.split(/[\\/]/).pop() ?? "")))
+        .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(this.discard ? t.blocked : t.dim)
+          .child(this.discard ? "저장 안 됨 · ← 다시 누르면 버림" : (this.dirty ? "● " : "") + (this.file ?? this.root?.split(/[\\/]/).pop() ?? "")))
+        .when(Boolean(this.file) && this.editable && Boolean(this.code), el => el.child(div().id("files-save").flex_none().px(8).py(2).rounded(6).text_size(12)
+          .cursor_pointer().when(this.dirty, s => s.bg(t.solid).text_color(t.solid_foreground)).when(!this.dirty, s => s.text_color(t.dim).border_1().border_color(t.border))
+          .on_click((_e, cx) => this.save(cx)).child(this.saving ? "저장 중…" : "저장"))))
       .when(!this.file, el => el.child(v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6)
         .on_mouse_down("right", (_e, cx) => this.menu("", true, cx))
         .on_drop((e, cx) => this.drop(e.paths, "", cx))

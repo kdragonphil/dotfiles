@@ -149,10 +149,30 @@
                   "children": [
                     {
                       "id": "files",
-                      "type": "block",
-                      "content": {
-                        "mod": "my-files"
-                      }
+                      "type": "stack",
+                      "active": "files-plus-tree",
+                      "children": [
+                        {
+                          "id": "files-plus-tree",
+                          "type": "block",
+                          "content": {
+                            "mod": "files-plus",
+                            "props": {
+                              "previewStack": "files"
+                            }
+                          }
+                        },
+                        {
+                          "id": "preview-plus",
+                          "type": "block",
+                          "content": {
+                            "mod": "preview-plus",
+                            "props": {
+                              "previewStack": "files"
+                            }
+                          }
+                        }
+                      ]
                     },
                     {
                       "id": "changes",

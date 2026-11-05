@@ -1,0 +1,188 @@
+import { div } from "gpui-kit";
+import { v_flex, h_flex, InputState, Input } from "gpui-base";
+import { props, shared, setShared, run, openOverlay, closeOverlay, pickFolder, window as appWindow } from "herdr";
+import { FilesPanel } from "./workspace.js";
+import { prune, basename, relativePath } from "./roots.js";
+import { workspaceSnapshot, changeRoots } from "./config.js";
+import { appearance } from "./appearance.js";
+import { CLIPBOARD, menuItems, menuLayout, ensureTarget, insertReference, paste, createEntry, renameEntry, trashEntry, reveal, changed } from "./actions.js";
+import { TITLES, metrics, viewport, zoom, dialogLayout } from "./metrics.js";
+import { renderDrag } from "./drag.js";
+import { OPEN_LOCATION, OPEN_OPTIONS, openLocation } from "./preferences.js";
+
+const NAME_ACTIONS = new Set(["new-file", "new-folder", "rename"]);
+
+export default class FilesPlus extends FilesPanel {
+  init(_props, cx) {
+    const p = props() || {};
+    this.role = p.role; this.targetEntry = p.target; this.action = p.action; this.busy = false; this.at = 0;
+    if (!this.role) { this.initPanel(cx); return; }
+    if (this.role === "preview") { this.initPreview(cx); return; }
+    this.handle = cx.focus_handle();
+    if (this.role === "settings") {
+      this.handle.focus();
+    } else if (this.role === "menu") {
+      this.error = p.error; this.menuLook = JSON.stringify(appearance());
+      this.geometry = p.geometry || menuLayout(menuItems(this.targetEntry), this.error, metrics(), viewport(), p.pointer, zoom());
+      this.at = menuItems(this.targetEntry).findIndex(item => item.enabled);
+      this.handle.focus();
+    } else if (this.role === "drag") {
+      this.cursor = p.cursor; this.handle.focus();
+    } else if (this.role === "dialog") {
+      if (NAME_ACTIONS.has(this.action)) {
+        const value = this.action === "rename" ? basename(this.targetEntry.path) : "";
+        this.input = InputState.new({ value, placeholder: "Name" });
+        if (value) this.input.set_selected_range({ start: 0, end: value.length });
+        this.input.on("change", (_event, cx) => { this.error = null; cx.notify(); });
+        this.input.on("submit", (_event, cx) => this.submit(cx));
+        this.input.focus();
+      } else this.handle.focus();
+      if (this.action === "add-root" || this.action === "remove-root") {
+        this.preparing = true;
+        cx.spawn(async cx => {
+          try { this.captured = await workspaceSnapshot(this.targetEntry); }
+          catch (error) { this.error = error.message || String(error); }
+          this.preparing = false; cx.notify();
+        });
+      }
+    }
+  }
+  openDialog(action, cx) {
+    openOverlay({ mod: "files-plus", kind: "dialog", modal: true, ...dialogLayout(action, this.targetEntry),
+      props: { role: "dialog", action, target: this.targetEntry } });
+    closeOverlay(props().overlay);
+  }
+  choose(index, cx) {
+    if (this.busy) return;
+    const item = menuItems(this.targetEntry)[index], target = this.targetEntry;
+    if (!item?.enabled) return;
+    if (TITLES[item.id]) { this.openDialog(item.id, cx); return; }
+    this.busy = true; this.error = null; cx.notify();
+    cx.spawn(async cx => {
+      try {
+        ensureTarget(target);
+        if (item.id === "agent") await insertReference(target, cx);
+        else if (item.id === "copy") setShared(CLIPBOARD, { path: target.path, kind: target.kind, on: target.on });
+        else if (item.id === "paste") await paste(target);
+        else if (item.id === "path") cx.write_to_clipboard(target.path);
+        else if (item.id === "relative") cx.write_to_clipboard(relativePath(target.root, target.path));
+        else if (item.id === "reveal") await reveal(target);
+        else if (item.id === "new-here") run("tab.new", { space: target.space, folder: target.root });
+        // Keep this owner alive until its asynchronous operation has finished.
+        closeOverlay(props().overlay);
+      } catch (error) {
+        this.error = error.message || String(error); this.busy = false; cx.notify();
+        this.resizeMenu(cx);
+      }
+    });
+  }
+  resizeMenu(cx) {
+    if (this.busy) return;
+    const p = props(), target = this.targetEntry;
+    const geometry = menuLayout(menuItems(target), this.error, metrics(), viewport(), p.pointer, zoom());
+    if (geometry.width === this.geometry.width && geometry.height === this.geometry.height) return;
+    openOverlay({ mod: "files-plus", kind: "popup", ...geometry, props: { role: "menu", target, geometry, pointer: p.pointer, error: this.error } });
+    closeOverlay(p.overlay);
+  }
+  submit(cx) {
+    if (this.busy || this.preparing || ((this.action === "add-root" || this.action === "remove-root") && !this.captured)) return;
+    this.busy = true; this.error = null; cx.notify();
+    cx.spawn(async cx => {
+      try {
+        const target = this.targetEntry, action = this.action, name = this.input?.value();
+        if (action === "new-file" || action === "new-folder") await createEntry(target, action === "new-file" ? "file" : "dir", name);
+        else if (action === "rename") await renameEntry(target, name);
+        else if (action === "trash") await trashEntry(target);
+        else if (action === "add-root") {
+          const picked = await pickFolder({ prompt: "Add" });
+          if (await changeRoots(target, action, picked, this.captured)) changed();
+        } else if (action === "remove-root") { if (await changeRoots(target, action, null, this.captured)) changed(); }
+        closeOverlay(props().overlay);
+      } catch (error) { this.error = error.message || String(error); this.busy = false; cx.notify(); }
+    });
+  }
+  renderMenu(cx) {
+    const look = appearance(), { colors: t, font } = look, list = menuItems(this.targetEntry);
+    const signature = JSON.stringify(look);
+    if (this.menuLook !== signature) { this.menuLook = signature; cx.timer.after(0, cx => this.resizeMenu(cx)); }
+    if (!list[this.at]?.enabled) this.at = list.findIndex(item => item.enabled);
+    return v_flex().id("files-menu").track_focus(this.handle).w_full().h(this.geometry.height).min_h(0).overflow_y_scrollbar().p(5).bg(t.popover).text_color(t.foreground).font_family(font).text_size(13)
+      .on_key_down((event, cx) => {
+        if (this.busy) { cx.stop_propagation(); return; }
+        if (event.key === "up" || event.key === "down") {
+          const step = event.key === "down" ? 1 : -1;
+          do { this.at = (this.at + list.length + step) % list.length; } while (!list[this.at].enabled);
+        } else if (event.key === "enter") this.choose(this.at, cx);
+        else if (event.key === "escape") closeOverlay(props().overlay);
+        else return;
+        cx.stop_propagation(); cx.notify();
+      })
+      .children(list.map((item, index) => v_flex().flex_none()
+        .when(item.group, el => el.child(div().mx(7).my(4).border_b_1().border_color(t.border)))
+        .child(h_flex().id(`action-${item.id}`).h(30).px(8).rounded(7).items_center().flex_none().disabled(!item.enabled || this.busy).cursor_default().role("button").accessibility_label(item.label)
+          .text_color(!item.enabled || this.busy ? t.dim : item.danger ? t.ansi1 : t.foreground)
+          .when(index === this.at && item.enabled, el => el.bg(t.selected))
+          .when(item.enabled && !this.busy, el => el.hover(s => s.bg(t.hover)).active(s => s.bg(t.selected)))
+          .on_click((_event, cx) => this.choose(index, cx)).child(item.label))))
+      .when(Boolean(this.error), el => el.child(h_flex().h(24).flex_none().px(8).items_center().text_size(12).text_color(t.ansi1).child(div().truncate().tooltip(this.error).child(this.error))));
+  }
+  renderDialog(cx) {
+    const { colors: t, font } = appearance(), action = this.action, target = this.targetEntry;
+    const rootAction = action === "add-root" || action === "remove-root";
+    const enabled = !this.busy && !this.preparing && (!this.input || Boolean(this.input.value().trim())) && (!rootAction || Boolean(this.captured));
+    const fill = action === "trash" ? t.ansi1 : t.solid, ink = action === "trash" ? t.background : t.solid_foreground;
+    const button = (id, text, primary, active, fn) => h_flex().id(id).h(32).px(14).items_center().justify_center().rounded(8).border_1().border_color(primary && active ? fill : t.input).font_medium().cursor_default().role("button").accessibility_label(text).disabled(!active)
+      .bg(primary && active ? fill : t.raised).text_color(!active ? t.dim : primary ? ink : t.foreground)
+      .when(active, el => el
+        .hover(s => primary ? s.opacity(0.88) : s.bg(t.hover).text_color(t.foreground))
+        .active(s => primary ? s.opacity(0.8) : s.bg(t.selected))
+        .on_mouse_down("left", (_event, cx) => cx.stop_propagation()))
+      .on_click((_event, cx) => { cx.stop_propagation(); if (active) fn(cx); }).child(text);
+    return v_flex().id("files-dialog").track_focus(this.handle).w_full().h_full().min_h(0).p(18).gap(12).bg(t.popover).text_color(t.foreground).font_family(font).text_size(13)
+      .on_key_down((event, cx) => {
+        if (event.key === "escape") { if (!this.busy) closeOverlay(props().overlay); cx.stop_propagation(); }
+        else if (event.key === "enter" && !this.input) { this.submit(cx); cx.stop_propagation(); }
+      })
+      .child(div().text_size(15).font_semibold().child(TITLES[action] || "File action"))
+      .child(div().text_size(12).text_color(t.muted).truncate().child(target.path))
+      .when(Boolean(this.input), el => el.child(Input.new(this.input).h(36).px(10).rounded(8).border_1().border_color(t.input).bg(t.background).text_color(t.foreground).accessibility_label("Name")))
+      .when(action === "trash", el => el.child(div().child(target.on === null && appWindow().platform === "macos" ? `Move “${basename(target.path)}” to Trash?` : `Permanently delete “${basename(target.path)}”? This cannot be undone.`)))
+      .when(action === "remove-root", el => el.child(div().child("Remove this folder from the workspace? Files on disk are kept.")))
+      .when(Boolean(this.error) || this.preparing, el => el.child(div().text_size(12).text_color(this.error ? t.ansi1 : t.muted).child(this.error || "Loading workspace…")))
+      .child(div().flex_1())
+      .child(h_flex().justify_end().gap(8)
+        .child(button("dialog-cancel", "Cancel", false, !this.busy, () => closeOverlay(props().overlay)))
+        .child(button("dialog-submit", this.busy ? "Working…" : action === "add-root" ? "Choose folder…" : action === "trash" ? target.on === null && appWindow().platform === "macos" ? "Move to Trash" : "Delete" : action === "remove-root" ? "Remove" : action === "rename" ? "Rename" : "Create", true, enabled, cx => this.submit(cx))));
+  }
+  renderSettings() {
+    const { colors: t, font } = appearance(), selected = openLocation(shared(OPEN_LOCATION));
+    return v_flex().id("files-settings-dialog").track_focus(this.handle).size_full().p(18).gap(12).bg(t.popover).text_color(t.foreground).font_family(font).text_size(13)
+      .on_key_down((event, cx) => {
+        if (event.key === "escape") closeOverlay(props().overlay);
+        else if (["up", "down"].includes(event.key)) {
+          const index = OPEN_OPTIONS.findIndex(option => option.value === selected);
+          setShared(OPEN_LOCATION, OPEN_OPTIONS[(index + (event.key === "down" ? 1 : 2)) % 3].value);
+        } else return;
+        cx.stop_propagation(); cx.notify();
+      })
+      .child(div().text_size(15).font_semibold().child("Files settings"))
+      .child(div().text_color(t.muted).child("Open files in"))
+      .child(v_flex().gap(4).role("radio_group").accessibility_label("Open files in").children(OPEN_OPTIONS.map(option =>
+        h_flex().id(`open-${option.value}`).h(32).px(10).gap(10).items_center().rounded(6).cursor_default().role("radio_button").checked(selected === option.value).accessibility_label(option.label)
+          .bg(selected === option.value ? t.selected : t.popover).hover(s => s.bg(t.hover))
+          .on_click((_event, cx) => { setShared(OPEN_LOCATION, option.value); cx.stop_propagation(); cx.notify(); })
+          .child(div().w(14).child(selected === option.value ? "●" : "○")).child(option.label))))
+      .child(h_flex().justify_end().child(div().id("settings-done").px(12).h(28).flex().items_center().rounded(6).role("button").accessibility_label("Done").cursor_default().hover(s => s.bg(t.hover))
+        .on_click(() => closeOverlay(props().overlay)).child("Done")));
+  }
+  render(cx) {
+    if (this.role === "preview") return this.renderPreview(cx);
+    if (this.role === "settings") return this.renderSettings(cx);
+    if (this.role === "drag") return renderDrag(this, cx);
+    if (this.role === "menu") return this.renderMenu(cx);
+    if (this.role === "dialog") return this.renderDialog(cx);
+    prune();
+    return this.renderPanel(cx);
+  }
+  close() { this.input?.release(); super.close(); }
+}
