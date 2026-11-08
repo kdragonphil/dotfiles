@@ -100,6 +100,7 @@ API 키나 개인 URL은 git 에 올리지 않고 `mcp/secrets.local.json` 에�
 | `layouts/board.json`, `main-timer.json` | 에이전트 보드, 탭별 작업 타이머 레이아웃 |
 | `mods/my-files`, `my-files-actions` | Files 패널: 오른쪽 클릭(경로 복사, Finder에서 보기, 이름 변경, 휴지통), Finder 에서 끌어다 놓기, 이미지 미리보기 |
 | `mods/agent-board`, `timer-tabs`, `git-graph`, `github`, `issues`, `issue-agent` | 개인 모드 (`github`/`issues`/`issue-agent` 는 `gh` 필요) |
+| `mods/files-plus`, `preview-plus`, `file-icons` | 파일 탐색·편집·미리보기, Finder 파일 복사와 Mac ↔ 원격 파일 전송 |
 | `keys.json`, `settings.json`, `fonts/` | 단축키, 글꼴(D2Coding) 등 |
 
 넣지 않는 것: `layouts/.state/`(패널 크기 등 클릭 상태), `view.json`, `shared.json`, `data/`, `cache/`, 스페이스·탭·ssh 머신 목록.
@@ -107,6 +108,23 @@ API 키나 개인 URL은 git 에 올리지 않고 `mcp/secrets.local.json` 에�
 > 기본 제공 레이아웃·모드(`main`, `files` 등)는 앱이 켤 때마다 원래대로 덮어씁니다.
 > 고치려면 복제해서 고치세요: `herdr-app do layout.clone '{"name":"main","as":"my-layout"}'`,
 > `herdr-app do mod.clone '{"name":"files","as":"my-files"}'`
+
+### Files Plus에서 파일 주고받기 (macOS)
+
+- 한 번 클릭하면 선택, 두 번 클릭하면 파일을 엽니다. 폴더는 왼쪽 화살표나 더블클릭으로 펼칩니다.
+- `⌘클릭`으로 개별 추가·해제, `Shift클릭`으로 범위 선택, 마우스를 누른 채로 드래그하면 여러 행을 선택합니다. `⌘A`는 보이는 목록 전체, `Esc`는 선택 해제입니다.
+- 여러 개를 선택한 상태에서 오른쪽 클릭 → **Copy N items** / **Save N items to Mac…**을 사용할 수 있습니다. 부모 폴더와 그 안의 파일을 함께 선택해도 중복 복사하지 않습니다.
+- 에이전트로 `@파일` 참조를 끌어 넣는 기존 동작은 `Option(⌥)`을 누른 채 드래그하거나 **Add to agent (@)** 메뉴로 사용합니다.
+- Finder의 파일·폴더를 Files 목록이나 폴더 행에 드롭하면 그 위치로 복사합니다. 파일 행에 드롭하면 해당 파일의 부모 폴더로 복사합니다.
+- Finder에서 복사한 파일은 Files의 **Paste** 버튼이나 오른쪽 클릭 → **Paste**로 붙여넣습니다. Files 목록에 키보드 포커스가 있으면 `⌘C` / `⌘V`도 쓸 수 있습니다.
+- Files에서 오른쪽 클릭 → **Copy**를 누르면 Finder에 붙여넣을 수 있는 실제 파일이 복사됩니다. 원격 파일은 먼저 이 Mac의 로컬 캐시에 내려받습니다.
+- 오른쪽 클릭 → **Save to Mac…**은 저장할 Mac 폴더를 선택해 파일·폴더를 복사합니다.
+- 같은 이름이 있으면 `copy`, `copy 2` 등의 이름으로 보존합니다. 기존 파일을 덮어쓰지 않습니다.
+- 원격 전송은 추가 SSH 로그인 없이 연결된 herdr-core를 사용합니다. Mac과 원격에 `python3`, Mac에 `hc`가 필요합니다. 전송 중에는 **Copying…**이 표시됩니다.
+- Downloads·바탕화면의 접근 허용은 macOS가 관리합니다. Mac 파일 복사는 Herdr의 실행 경로 안에서 나누어 처리하며, 접근이 거절되면 **시스템 설정 → 개인정보 보호 및 보안 → 파일 및 폴더**에서 macOS가 요청한 Herdr 항목의 해당 폴더를 허용한 뒤 다시 시도하세요.
+- Finder로 직접 끌어내는 드래그는 모드 API가 지원하지 않으므로 **Copy → Finder에 붙여넣기** 또는 **Save to Mac…**을 사용합니다.
+
+로컬 텍스트 파일은 Preview Plus에서 편집하고 `⌘S`로 저장합니다. Markdown은 **Edit** 버튼으로 원문 편집을 엽니다. 원격 파일·40만 자 초과 텍스트는 읽기 전용입니다.
 
 ### agents/
 | 저장소 | 홈 |

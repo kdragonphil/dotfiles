@@ -30,14 +30,14 @@ export function visibleRows(state) {
     for (const entry of list) {
       const path = joinPath(prefix, entry.name), open = state.folders.has(path);
       out.push({ key: path, id: `file-${path}`, path, root, depth, kind: entry.dir ? "dir" : "file", name: entry.name,
-        mark: state.marks[path], open, selected: path === state.selectedFile, fresh: state.fresh?.has(path) || false });
+        mark: state.marks[path], open, selected: state.selectedPaths?.has(path) || false, fresh: state.fresh?.has(path) || false });
       if (entry.dir && open) walk(path, root, depth + 1);
     }
   };
   if (state.workspace) for (const folder of state.rootInfo || state.workspace.folders) {
     const path = folder.path, open = state.folders.has(path), missing = folder.exists === false;
     out.push({ key: `root-${path}`, id: `root-${path}`, path, root: path, depth: 0, kind: "root", name: label(folder),
-      detail: missing ? "Not found" : shortPath(path), open, missing, selected: path === state.activeRoot });
+      detail: missing ? "Not found" : shortPath(path), open, missing, selected: state.selectedPaths?.has(path) || false });
     if (open && !missing) walk(path, path, 1);
   }
   else if (state.root) walk(state.root, state.root, 0);
@@ -80,13 +80,14 @@ export class RowChunk extends View {
         .when(entering, el => el.on_size_change((_size, cx) => this.reveal(row.key, cx)))
         .opacity(hidden ? 0 : 1).transition("height", FOLDER_MOTION).transition("opacity", FOLDER_MOTION)
         .when(row.selected, el => el.bg(t.selected)).when(!row.leaving, el => el.hover(s => s.bg(t.hover)))
-        .on_mouse_down("left", (event) => { if (row.leaving) return; panel.suppressClick = false; panel.dragCandidate = { target: panel.target(row.path, row.kind, row.root), start: event.position }; })
-        .on_click((_event, cx) => {
-          if (row.leaving || panel.suppressClick) { panel.suppressClick = false; cx.stop_propagation(); return; }
-          if (!row.missing) panel.clickedRow = row;
-        })
+        .on_mouse_down("left", (event, cx) => panel.beginRowSelection(row, event, cx))
+        .on_mouse_move((event, cx) => panel.dragSelectionTo(row, event, cx))
+        .on_drop((event, cx) => panel.dropFiles(event.paths, panel.target(row.path, row.kind, row.root), cx))
+        .on_click((event, cx) => { cx.stop_propagation(); panel.rowClick(row, event, cx); })
         .on_mouse_down("right", (event, cx) => { if (row.leaving) cx.stop_propagation(); else panel.menu(row.path, row.kind, row.root, event, cx); })
-        .child(folder ? svg(`mods/files-plus/chevron-${row.open ? "down" : "right"}.svg`).size(12).flex_none().text_color(t.muted) : div().w(12).flex_none())
+        .child(folder ? div().size(12).flex_none().on_mouse_down("left", (_event, cx) => cx.stop_propagation())
+          .on_click((_event, cx) => { cx.stop_propagation(); if (!row.missing) panel.toggle(row.path, cx); })
+          .child(svg(`mods/files-plus/chevron-${row.open ? "down" : "right"}.svg`).size(12).text_color(t.muted)) : div().w(12).flex_none())
         .child(image(fileIcon(row.path, folder, row.open, settings().dark)).size(16).flex_none())
         .child(div().min_w(0).truncate().when(!row.detail, el => el.flex_1()).child(row.name))
         .when(Boolean(row.detail), el => el.child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.muted).child(row.detail)))
@@ -100,8 +101,15 @@ export class TreeView extends View {
   update(p) { this.data = p; }
   render() {
     const { chunks, panel, look } = this.data;
-    return v_flex().id("files-tree").w_full().min_w(0).flex_1().min_h(0).overflow_y_scrollbar().p(6)
-      .on_mouse_down("right", (event, cx) => { if (!panel.workspace && panel.root) panel.menu(panel.root, "dir", panel.root, event, cx); })
-      .children(chunks);
+    const gesture = panel.selectionGesture, bounds = panel.treeBounds, scale = settings().zoom || 1;
+    return v_flex().id("files-tree").relative().w_full().min_w(0).flex_1().min_h(0).overflow_y_scrollbar().p(6)
+      .on_mouse_down("left", (event, cx) => panel.beginBlankSelection(event, cx))
+      .on_mouse_down("right", (event, cx) => { const target = panel.transferTarget(); if (target) panel.menu(target.path, target.kind, target.root, event, cx); })
+      .children(chunks)
+      .when(Boolean(gesture?.active && bounds), el => el.child(div().absolute()
+        .left(Math.max(0, (Math.min(gesture.start.x, gesture.current.x) - bounds.x) / scale))
+        .top(Math.max(0, (Math.min(gesture.start.y, gesture.current.y) - bounds.y) / scale))
+        .w(Math.abs(gesture.current.x - gesture.start.x) / scale).h(Math.abs(gesture.current.y - gesture.start.y) / scale)
+        .bg(look.colors.selected).border_1().border_color(look.colors.accent).opacity(0.5)));
   }
 }

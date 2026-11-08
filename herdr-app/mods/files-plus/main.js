@@ -9,6 +9,7 @@ import { CLIPBOARD, menuItems, menuLayout, ensureTarget, insertReference, paste,
 import { TITLES, metrics, viewport, zoom, dialogLayout } from "./metrics.js";
 import { renderDrag } from "./drag.js";
 import { OPEN_LOCATION, OPEN_OPTIONS, openLocation } from "./preferences.js";
+import { copyFile, nativeFiles, saveToMac } from "./transfer.js";
 
 const NAME_ACTIONS = new Set(["new-file", "new-folder", "rename"]);
 
@@ -62,10 +63,14 @@ export default class FilesPlus extends FilesPanel {
       try {
         ensureTarget(target);
         if (item.id === "agent") await insertReference(target, cx);
-        else if (item.id === "copy") setShared(CLIPBOARD, { path: target.path, kind: target.kind, on: target.on });
-        else if (item.id === "paste") await paste(target);
-        else if (item.id === "path") cx.write_to_clipboard(target.path);
-        else if (item.id === "relative") cx.write_to_clipboard(relativePath(target.root, target.path));
+        else if (item.id === "copy") {
+          if (nativeFiles()) await copyFile(target, cx);
+          else setShared(CLIPBOARD, { path: target.path, kind: target.kind, on: target.on });
+        }
+        else if (item.id === "paste") await paste(target, cx);
+        else if (item.id === "save-to-mac") await saveToMac(target, cx);
+        else if (item.id === "path") cx.write_to_clipboard((target.entries || [target]).map(entry => entry.path).join("\n"));
+        else if (item.id === "relative") cx.write_to_clipboard((target.entries || [target]).map(entry => relativePath(entry.root || target.root, entry.path)).join("\n"));
         else if (item.id === "reveal") await reveal(target);
         else if (item.id === "new-here") run("tab.new", { space: target.space, folder: target.root });
         // Keep this owner alive until its asynchronous operation has finished.

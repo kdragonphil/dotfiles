@@ -3,7 +3,7 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState } from "gpui-base";
 import { spaces, panes, focused, exec, readTextFile, watchFolder, window as appWindow, props, shared, setShared, run, openOverlay, layout, notify } from "herdr";
 import { workspaceOf, describeRoots, reloadWorkspace, dirname, basename, joinPath, label, shortPath, rootOf, relativePath, contains, READ } from "./roots.js";
-import { captureTarget, installed, REVISION, menuLayout, menuItems } from "./actions.js";
+import { captureTarget, installed, REVISION, menuLayout, menuItems, ensureTarget, paste } from "./actions.js";
 import { appearance, sourceStyle } from "./appearance.js";
 import { visibleRows, retainClosingRows, TreeView, RowChunk, CHUNK_SIZE, FOLDER_MOTION } from "./tree.js";
 import { metrics, calibrationProbe, viewport, zoom, dialogLayout } from "./metrics.js";
@@ -11,6 +11,8 @@ import { panelWidth, fittedWidth, shouldFit, findNode } from "./fit.js";
 import { dragMove } from "./drag.js";
 import { OPEN_LOCATION, openLocation } from "./preferences.js";
 import { findOpenFile, focusOpenFile } from "./open-files.js";
+import { nativeFiles, importFiles, copyFile } from "./transfer.js";
+import { selectable, rangeSelection, clickSelection, copySelection } from "./selection.js";
 
 const PER_FOLDER = 500, TOTAL = 5000;
 const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", toml: "yaml", jsonc: "json", svelte: "html", vue: "html", md: "markdown" };
@@ -66,6 +68,8 @@ export class FilesPanel extends View {
     return loc;
   }
   initPanel(cx) {
+    this.handle = cx.focus_handle();
+    this.selectedPaths = new Set();
     this.entries = new Map(); this.folders = new Set(); this.pending = new Map(); this.watches = new Map(); this.marks = {};
     this.entryCount = 0; this.limits = new Set(); this.treeVersion = 0; this.chunks = []; this.gitCache = new Map();
     this.look = appearance();
@@ -157,6 +161,7 @@ export class FilesPanel extends View {
       this.pending = new Map(); this.marks = {}; this.rootInfo = null; this.watches.clear(); this.show(null); this.error = null; this.loading = null;
       this.generation = {}; this.entryCount = 0; this.limits.clear(); this.gitCache.clear(); this.changedPaths = new Set(); this.changeTimer = false; this.gitTimer = null;
       this.refreshAgain = null; this.treeVersion++; this.selectedFile = null;
+      this.selectedPaths = new Set(); this.selectionAnchor = null; this.selectionGesture = null; this.keyboardTarget = null;
       this.closingKeys = new Set(); this.exitTimer = null; this.fresh = new Set(); this.revealPath = null;
       this.manualWidthSpace = null; this.lastRequestedWidth = null; this.resizePending = null; this.fitSignature = null; this.fitCause = "user";
     }
@@ -342,9 +347,106 @@ export class FilesPanel extends View {
       .child(this.code ? Editor.new(this.code).flex_1().min_h(0) : div().p(12).text_color(t.muted).child(this.fileError || "Loading file…"));
   }
   target(path, kind, root) { return captureTarget(this.spaceId, path, kind, root, this.on, this.rootInfo?.find(folder => folder.path === root)?.physical || root); }
+  setSelection(paths, cx) {
+    this.selectedPaths = new Set(paths);
+    this.treeVersion++; this.syncTree(cx);
+    this.updateSelectionView(); cx.notify();
+  }
+  updateSelectionView() {
+    this.treeView?.set_props({ chunks: this.chunks.map(chunk => chunk.entity), panel: this, look: this.look });
+  }
+  selectionTarget(target) {
+    const entries = selectable(this.rowModel || []).filter(row => this.selectedPaths.has(row.path))
+      .map(row => this.target(row.path, row.kind, row.root));
+    return { ...target, entries: copySelection(entries.length ? entries : [target]) };
+  }
+  beginRowSelection(row, event, cx) {
+    if (row.leaving || row.missing) return;
+    this.handle.focus(); this.rowPress = event.position; this.suppressClick = false;
+    const previous = this.selectedPaths;
+    this.setSelection(clickSelection(this.rowModel || [], previous, row.path, this.selectionAnchor, event.modifiers), cx);
+    if (!event.modifiers.shift) this.selectionAnchor = row.path;
+    this.keyboardTarget = this.target(row.path, row.kind, row.root);
+    this.selectionGesture = event.modifiers.alt ? null : { start: event.position, current: event.position, anchor: row.path,
+      originY: event.bounds?.y, rowHeight: event.bounds?.height, base: event.modifiers.platform || event.modifiers.control ? [...previous] : [] };
+    this.dragCandidate = event.modifiers.alt ? { target: this.keyboardTarget, start: event.position } : null;
+  }
+  beginBlankSelection(event, cx) {
+    this.treeBounds = event.bounds;
+    if (this.rowPress?.x === event.position.x && this.rowPress?.y === event.position.y) { this.rowPress = null; return; }
+    this.handle.focus(); this.dragCandidate = null; this.suppressClick = false;
+    const additive = event.modifiers.platform || event.modifiers.control || event.modifiers.shift;
+    this.selectionGesture = { start: event.position, current: event.position, base: additive ? [...this.selectedPaths] : [] };
+    if (!additive) { this.keyboardTarget = null; this.setSelection([], cx); }
+  }
+  dragSelectionTo(row, event, cx) {
+    const gesture = this.selectionGesture;
+    if (!gesture || Math.hypot(event.position.x - gesture.start.x, event.position.y - gesture.start.y) < 5 * zoom()) return;
+    const rows = selectable(this.rowModel || []);
+    if (!gesture.anchor) {
+      const index = rows.findIndex(value => value.path === row.path), height = Math.max(1, event.bounds.height);
+      gesture.anchor = rows[Math.max(0, Math.min(rows.length - 1, index + Math.floor((gesture.start.y - event.bounds.y) / height)))]?.path;
+    }
+    gesture.current = event.position; gesture.active = true; gesture.exact = event.position;
+    this.suppressClick = true;
+    const next = rangeSelection(rows, gesture.anchor, row.path, gesture.base);
+    if (JSON.stringify([...next]) !== JSON.stringify([...this.selectedPaths])) this.setSelection(next, cx);
+    else { this.updateSelectionView(); cx.notify(); }
+  }
+  moveSelection(event, cx) {
+    const gesture = this.selectionGesture;
+    if (!gesture || Math.hypot(event.position.x - gesture.start.x, event.position.y - gesture.start.y) < 5 * zoom()) return;
+    gesture.current = event.position; gesture.active = true; this.suppressClick = true;
+    if (gesture.anchor && gesture.rowHeight && (gesture.exact?.x !== event.position.x || gesture.exact?.y !== event.position.y)) {
+      const rows = selectable(this.rowModel || []), anchor = rows.findIndex(row => row.path === gesture.anchor);
+      const index = Math.max(0, Math.min(rows.length - 1, anchor + Math.floor((event.position.y - gesture.originY) / gesture.rowHeight)));
+      const next = rangeSelection(rows, gesture.anchor, rows[index]?.path, gesture.base);
+      if (JSON.stringify([...next]) !== JSON.stringify([...this.selectedPaths])) this.setSelection(next, cx);
+    }
+    this.updateSelectionView(); cx.notify();
+  }
+  endSelection(cx) {
+    if (!this.selectionGesture) return;
+    this.suppressClick = Boolean(this.selectionGesture.active);
+    this.selectionGesture = null; this.updateSelectionView(); cx.notify();
+  }
+  rowClick(row, event, cx) {
+    if (row.leaving || row.missing || this.suppressClick) { this.suppressClick = false; return; }
+    if (event.click_count < 2 || event.modifiers.platform || event.modifiers.control || event.modifiers.shift) return;
+    if (row.kind === "file") this.openFile(row.path, row.root, cx); else this.toggle(row.path, cx);
+  }
+  transferTarget() {
+    if (!this.current(this.context)) return null;
+    if (this.keyboardTarget?.space === this.spaceId && this.keyboardTarget.on === this.on) return this.keyboardTarget;
+    const root = this.activeRoot || this.rootInfo?.[0]?.path || this.root;
+    return root ? this.target(root, "dir", root) : null;
+  }
+  transferAction(action, target, cx, paths) {
+    if (this.transferBusy || !target) return;
+    if (action === "copy" && !this.selectedPaths.size) return;
+    this.transferBusy = true; cx.notify();
+    cx.spawn(async cx => {
+      try {
+        ensureTarget(target);
+        if (action === "drop") await importFiles(paths, target, cx);
+        else if (action === "copy") await copyFile(this.selectionTarget(target), cx);
+        else await paste(target, cx);
+      } catch (error) { notify({ title: "File copy failed", body: error.message || String(error), level: "error" }); }
+      finally { this.transferBusy = false; cx.notify(); }
+    });
+  }
+  dropFiles(paths, target, cx) {
+    cx.stop_propagation();
+    if (!paths?.length) return;
+    const signature = JSON.stringify([paths, target?.path]), now = Date.now();
+    if (this.lastDrop?.signature === signature && now - this.lastDrop.at < 300) return;
+    this.lastDrop = { signature, at: now };
+    this.transferAction("drop", target, cx, paths);
+  }
   menu(path, kind, root, event, cx) {
     cx.stop_propagation();
-    const target = this.target(path, kind, root), geometry = menuLayout(menuItems(target), "", metrics(), viewport(), event.position, zoom());
+    if (!this.selectedPaths.has(path)) { this.selectionAnchor = path; this.keyboardTarget = this.target(path, kind, root); this.setSelection([path], cx); }
+    const target = this.selectionTarget(this.target(path, kind, root)), geometry = menuLayout(menuItems(target), "", metrics(), viewport(), event.position, zoom());
     openOverlay({ mod: "files-plus", kind: "popup", ...geometry, props: { role: "menu", target, geometry, pointer: event.position } });
   }
   syncTree(cx, loc = this.location()) {
@@ -434,21 +536,27 @@ export class FilesPanel extends View {
     const fileRoot = this.file ? rootOf(this.file, roots) : null;
     const add = Boolean(this.root || entry?.folders.length) && this.on === null && appWindow().platform !== "windows";
     const title = this.file ? fileRoot ? `${label(fileRoot)}/${relativePath(fileRoot.path, this.file)}` : relativePath(this.root, this.file) : entry?.name || (this.root ? label({ path: this.root }) : "");
-    return v_flex().id("files-plus").size_full().min_w(0).min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).font_family(font).text_size(13)
+    return v_flex().id("files-plus").track_focus(this.handle).size_full().min_w(0).min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).font_family(font).text_size(13)
       .on_size_change((size, cx) => this.panelResized(size, cx))
-      .on_mouse_down("left", event => { if (event.bounds) this.panelBounds = event.bounds; })
-      .on_mouse_up("left", () => { this.dragCandidate = null; })
-      .on_click((_event, cx) => {
-        const row = this.clickedRow; this.clickedRow = null;
-        if (row) { if (row.kind === "file") this.openFile(row.path, row.root, cx); else this.toggle(row.path, cx); }
+      .on_mouse_down("left", (event, cx) => { this.handle.focus(); if (event.bounds) this.panelBounds = event.bounds; cx.notify(); })
+      .on_drop((event, cx) => this.dropFiles(event.paths, this.transferTarget(), cx))
+      .on_key_down((event, cx) => {
+        if (event.keystroke === "cmd-a") { cx.stop_propagation(); this.setSelection(selectable(this.rowModel || []).map(row => row.path), cx); return; }
+        if (event.keystroke === "escape") { cx.stop_propagation(); this.selectionGesture = null; this.setSelection([], cx); return; }
+        if (event.keystroke === "enter" && this.keyboardTarget && this.selectedPaths.size === 1) { cx.stop_propagation(); const row = this.keyboardTarget; if (row.kind === "file") this.openFile(row.path, row.root, cx); else this.toggle(row.path, cx); return; }
+        if (!nativeFiles() || !["cmd-c", "cmd-v"].includes(event.keystroke)) return;
+        cx.stop_propagation();
+        this.transferAction(event.keystroke === "cmd-c" ? "copy" : "paste", this.transferTarget(), cx);
       })
-      .on_mouse_move((event, cx) => dragMove(this, event, cx))
+      .on_mouse_up("left", (_event, cx) => { this.dragCandidate = null; this.endSelection(cx); })
+      .on_hover((hovered, cx) => { if (!hovered) { this.dragCandidate = null; this.endSelection(cx); } })
+      .on_mouse_move((event, cx) => { this.moveSelection(event, cx); dragMove(this, event, cx); })
       .child(calibrationProbe(cx => { this.scheduleFit(cx); cx.notify(); }))
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().bg(t.background).border_b_1().border_color(t.border)
         .when(Boolean(this.file), el => el.child(h_flex().id("files-back").size(24).items_center().justify_center().rounded(6).cursor_default().role("button").accessibility_label("Back to files").tooltip("Back to files").text_color(t.muted).hover(s => s.bg(t.hover).text_color(t.foreground)).active(s => s.bg(t.selected).text_color(t.foreground))
           .on_mouse_down("left", (_event, cx) => cx.stop_propagation())
           .on_click((_event, cx) => { cx.stop_propagation(); this.show(null, cx); cx.notify(); }).child(svg("mods/files-plus/arrow-left.svg").size(14))))
-        .child(div().id("files-title").flex_1().min_w(0).truncate().font_semibold().tooltip(loc.cwd || this.root || "").child(this.panelTitle()))
+        .child(div().id("files-title").flex_1().min_w(0).truncate().font_semibold().tooltip(loc.cwd || this.root || "").child(this.selectedPaths.size ? `${this.panelTitle()} · ${this.selectedPaths.size} selected` : this.panelTitle()))
         .child(h_flex().id("add-folder").size(24).items_center().justify_center().rounded(6).cursor_default().text_color(add ? t.muted : t.dim).role("button").accessibility_label("Add folder").tooltip("Add folder…").disabled(!add)
           .when(add, el => el.hover(s => s.bg(t.hover).text_color(t.foreground)).active(s => s.bg(t.selected).text_color(t.foreground)).on_mouse_down("left", (_event, cx) => cx.stop_propagation())).on_click((_event, cx) => {
             if (!add) return;
@@ -458,6 +566,9 @@ export class FilesPanel extends View {
             cx.stop_propagation();
           }).child(svg("mods/files-plus/plus.svg").size(14)))
         .when(Boolean(this.file), el => el.child(div().max_w(140).truncate().text_size(12).text_color(t.dim).tooltip(this.file).child(title)))
+        .when(nativeFiles(), el => el.child(h_flex().id("files-paste").h(24).px(6).flex_none().items_center().rounded(6).cursor_default().role("button").accessibility_label("Paste files from Finder").tooltip("Paste files from Finder (⌘V)").disabled(Boolean(this.transferBusy)).text_size(12).text_color(t.muted).hover(s => s.bg(t.hover))
+          .on_mouse_down("left", (_event, cx) => cx.stop_propagation())
+          .on_click((_event, cx) => { cx.stop_propagation(); this.transferAction("paste", this.transferTarget(), cx); }).child(this.transferBusy ? "Copying…" : "Paste")))
         .child(h_flex().id("files-settings").size(24).flex_none().items_center().justify_center().rounded(6).cursor_default().role("button").accessibility_label("Files settings").tooltip("Files settings").text_color(t.muted).hover(s => s.bg(t.hover).text_color(t.foreground))
           .on_mouse_down("left", (_event, cx) => cx.stop_propagation())
           .on_click((_event, cx) => {
@@ -466,6 +577,7 @@ export class FilesPanel extends View {
           }).child(svg("mods/files-plus/settings.svg").size(14))))
       .when(Boolean(entry?.error), el => el.child(div().px(14).py(8).text_size(12).text_color(t.ansi1).child(entry.error)))
       .when(!this.file, el => el.child(this.treeView))
+      .when(nativeFiles() && !this.file, el => el.child(div().h(24).px(14).flex_none().flex().items_center().text_size(11).text_color(t.dim).child(this.transferBusy ? "Copying files…" : "⌘/Shift-click or drag to select · Double-click to open")))
       .when(Boolean(this.file), el => el.child(v_flex().id("files-preview").flex_1().min_h(0)
         .child(this.code ? Editor.new(this.code).flex_1().min_h(0) : div().p(12).text_color(t.muted)
           .when(!this.fileError, el => el.loop("opacity", { from: 0.5, to: 1, period: 1200, easing: "ease-out" })).child(this.fileError || "Loading file…"))));

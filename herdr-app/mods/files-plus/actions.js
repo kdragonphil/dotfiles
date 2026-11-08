@@ -1,6 +1,7 @@
 import { exec, focused, panes, spaces, window, home, appHome, readTextFile, shared, setShared, run } from "herdr";
 import { basename, dirname, joinPath, contains, relativePath, workspaceOf } from "./roots.js";
 import { textWidth } from "./metrics.js";
+import { nativeFiles, pasteFiles } from "./transfer.js";
 
 export function menuLayout(items, statusText, metrics, viewport, pointer, zoom = 1) {
   const width = Math.min(Math.floor(Math.max(188, viewport ? viewport.width / zoom - 16 : 10000)), Math.ceil(Math.max(188,
@@ -92,8 +93,9 @@ export async function availablePath(dir, name, kind, on) {
 }
 export function changed() { setShared(REVISION, (Number(shared(REVISION)) || 0) + 1); }
 
-export async function paste(target) {
+export async function paste(target, cx) {
   ensureTarget(target);
+  if (nativeFiles()) return pasteFiles(target, cx);
   const source = shared(CLIPBOARD), dir = destination(target);
   if (!source || source.on !== target.on) throw new Error("Copy an entry from the same machine first");
   if (source.kind !== "file") {
@@ -161,17 +163,19 @@ export async function reveal(target) {
 export async function installed(name) { return await readTextFile(joinPath(appHome(), `mods/${name}/mod.json`)) !== null; }
 export function menuItems(target) {
   const clip = shared(CLIPBOARD), root = target.kind === "root" || target.path === target.root;
+  const count = target.entries?.length || 1, multiple = count > 1;
   return [
-    { id: "agent", label: "Add to agent (@)", enabled: Boolean(target.active?.terminal) },
-    { id: "copy", label: "Copy", enabled: true },
-    { id: "paste", label: "Paste", enabled: Boolean(clip && clip.on === target.on) },
-    { id: "path", label: "Copy path", enabled: true },
-    { id: "relative", label: "Copy relative path", enabled: true },
-    { id: "reveal", label: window().platform === "macos" ? "Reveal in Finder" : window().platform === "windows" ? "Reveal in File Explorer" : "Reveal in file manager", enabled: target.on === null },
+    { id: "agent", label: "Add to agent (@)", enabled: !multiple && Boolean(target.active?.terminal) },
+    { id: "copy", label: multiple ? `Copy ${count} items` : "Copy", enabled: true },
+    { id: "paste", label: "Paste", enabled: nativeFiles() || Boolean(clip && clip.on === target.on) },
+    ...(nativeFiles() ? [{ id: "save-to-mac", label: multiple ? `Save ${count} items to Mac…` : "Save to Mac…", enabled: true }] : []),
+    { id: "path", label: multiple ? "Copy paths" : "Copy path", enabled: true },
+    { id: "relative", label: multiple ? "Copy relative paths" : "Copy relative path", enabled: true },
+    { id: "reveal", label: window().platform === "macos" ? "Reveal in Finder" : window().platform === "windows" ? "Reveal in File Explorer" : "Reveal in file manager", enabled: !multiple && target.on === null },
     { id: "new-file", label: "New file…", enabled: true, group: true },
     { id: "new-folder", label: "New folder…", enabled: true },
-    { id: "rename", label: "Rename…", enabled: !root },
-    { id: "trash", label: "Move to Trash…", enabled: !root, danger: true },
+    { id: "rename", label: "Rename…", enabled: !multiple && !root },
+    { id: "trash", label: "Move to Trash…", enabled: !multiple && !root, danger: true },
     ...(root ? [
       { id: "new-here", label: "New terminal here", enabled: true, group: true },
       { id: "remove-root", label: "Remove from workspace", enabled: (workspaceOf(target.space)?.folders.length || 0) > 1 }
