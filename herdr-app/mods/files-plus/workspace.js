@@ -162,6 +162,7 @@ export class FilesPanel extends View {
       this.generation = {}; this.entryCount = 0; this.limits.clear(); this.gitCache.clear(); this.changedPaths = new Set(); this.changeTimer = false; this.gitTimer = null;
       this.refreshAgain = null; this.treeVersion++; this.selectedFile = null;
       this.selectedPaths = new Set(); this.selectionAnchor = null; this.selectionGesture = null; this.keyboardTarget = null;
+      this.leftButtonDown = false;
       this.closingKeys = new Set(); this.exitTimer = null; this.fresh = new Set(); this.revealPath = null;
       this.manualWidthSpace = null; this.lastRequestedWidth = null; this.resizePending = null; this.fitSignature = null; this.fitCause = "user";
     }
@@ -362,6 +363,7 @@ export class FilesPanel extends View {
   }
   beginRowSelection(row, event, cx) {
     if (row.leaving || row.missing) return;
+    this.leftButtonDown = true;
     this.handle.focus(); this.rowPress = event.position; this.suppressClick = false;
     const previous = this.selectedPaths;
     this.setSelection(clickSelection(this.rowModel || [], previous, row.path, this.selectionAnchor, event.modifiers), cx);
@@ -374,12 +376,14 @@ export class FilesPanel extends View {
   beginBlankSelection(event, cx) {
     this.treeBounds = event.bounds;
     if (this.rowPress?.x === event.position.x && this.rowPress?.y === event.position.y) { this.rowPress = null; return; }
+    this.leftButtonDown = true;
     this.handle.focus(); this.dragCandidate = null; this.suppressClick = false;
     const additive = event.modifiers.platform || event.modifiers.control || event.modifiers.shift;
     this.selectionGesture = { start: event.position, current: event.position, base: additive ? [...this.selectedPaths] : [] };
     if (!additive) { this.keyboardTarget = null; this.setSelection([], cx); }
   }
   dragSelectionTo(row, event, cx) {
+    if (!this.leftButtonDown) { this.endSelection(cx); return; }
     const gesture = this.selectionGesture;
     if (!gesture || Math.hypot(event.position.x - gesture.start.x, event.position.y - gesture.start.y) < 5 * zoom()) return;
     const rows = selectable(this.rowModel || []);
@@ -394,6 +398,7 @@ export class FilesPanel extends View {
     else { this.updateSelectionView(); cx.notify(); }
   }
   moveSelection(event, cx) {
+    if (!this.leftButtonDown) { this.endSelection(cx); return; }
     const gesture = this.selectionGesture;
     if (!gesture || Math.hypot(event.position.x - gesture.start.x, event.position.y - gesture.start.y) < 5 * zoom()) return;
     gesture.current = event.position; gesture.active = true; this.suppressClick = true;
@@ -406,11 +411,14 @@ export class FilesPanel extends View {
     this.updateSelectionView(); cx.notify();
   }
   endSelection(cx) {
+    this.leftButtonDown = false; this.rowPress = null; this.dragCandidate = null;
     if (!this.selectionGesture) return;
     this.suppressClick = Boolean(this.selectionGesture.active);
     this.selectionGesture = null; this.updateSelectionView(); cx.notify();
   }
   rowClick(row, event, cx) {
+    // A child click can consume the event before the panel sees mouse-up.
+    this.endSelection(cx);
     if (row.leaving || row.missing || this.suppressClick) { this.suppressClick = false; return; }
     if (event.click_count < 2 || event.modifiers.platform || event.modifiers.control || event.modifiers.shift) return;
     if (row.kind === "file") this.openFile(row.path, row.root, cx); else this.toggle(row.path, cx);
@@ -445,6 +453,7 @@ export class FilesPanel extends View {
   }
   menu(path, kind, root, event, cx) {
     cx.stop_propagation();
+    this.endSelection(cx);
     if (!this.selectedPaths.has(path)) { this.selectionAnchor = path; this.keyboardTarget = this.target(path, kind, root); this.setSelection([path], cx); }
     const target = this.selectionTarget(this.target(path, kind, root)), geometry = menuLayout(menuItems(target), "", metrics(), viewport(), event.position, zoom());
     openOverlay({ mod: "files-plus", kind: "popup", ...geometry, props: { role: "menu", target, geometry, pointer: event.position } });
@@ -549,6 +558,7 @@ export class FilesPanel extends View {
         this.transferAction(event.keystroke === "cmd-c" ? "copy" : "paste", this.transferTarget(), cx);
       })
       .on_mouse_up("left", (_event, cx) => { this.dragCandidate = null; this.endSelection(cx); })
+      .on_click((_event, cx) => this.endSelection(cx))
       .on_hover((hovered, cx) => { if (!hovered) { this.dragCandidate = null; this.endSelection(cx); } })
       .on_mouse_move((event, cx) => { this.moveSelection(event, cx); dragMove(this, event, cx); })
       .child(calibrationProbe(cx => { this.scheduleFit(cx); cx.notify(); }))

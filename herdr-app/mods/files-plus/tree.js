@@ -81,6 +81,7 @@ export class RowChunk extends View {
         .opacity(hidden ? 0 : 1).transition("height", FOLDER_MOTION).transition("opacity", FOLDER_MOTION)
         .when(row.selected, el => el.bg(t.selected)).when(!row.leaving, el => el.hover(s => s.bg(t.hover)))
         .on_mouse_down("left", (event, cx) => panel.beginRowSelection(row, event, cx))
+        .on_mouse_up("left", (_event, cx) => panel.endSelection(cx))
         .on_mouse_move((event, cx) => panel.dragSelectionTo(row, event, cx))
         .on_drop((event, cx) => panel.dropFiles(event.paths, panel.target(row.path, row.kind, row.root), cx))
         .on_click((event, cx) => { cx.stop_propagation(); panel.rowClick(row, event, cx); })
@@ -104,6 +105,8 @@ export class TreeView extends View {
     const gesture = panel.selectionGesture, bounds = panel.treeBounds, scale = settings().zoom || 1;
     return v_flex().id("files-tree").relative().w_full().min_w(0).flex_1().min_h(0).overflow_y_scrollbar().p(6)
       .on_mouse_down("left", (event, cx) => panel.beginBlankSelection(event, cx))
+      .on_mouse_up("left", (_event, cx) => panel.endSelection(cx))
+      .on_click((_event, cx) => panel.endSelection(cx))
       .on_mouse_down("right", (event, cx) => { const target = panel.transferTarget(); if (target) panel.menu(target.path, target.kind, target.root, event, cx); })
       .children(chunks)
       .when(Boolean(gesture?.active && bounds), el => el.child(div().absolute()
