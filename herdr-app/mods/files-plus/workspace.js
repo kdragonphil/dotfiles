@@ -14,7 +14,6 @@ import { findOpenFile, focusOpenFile } from "./open-files.js";
 
 const PER_FOLDER = 500, TOTAL = 5000;
 const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", toml: "yaml", jsonc: "json", svelte: "html", vue: "html", md: "markdown" };
-const RICH = /\.(md|markdown|png|jpe?g|webp|svg|pdf)$/i;
 const collator = globalThis.Intl?.Collator ? new globalThis.Intl.Collator() : { compare: (a, b) => a.localeCompare(b) };
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -276,7 +275,7 @@ export class FilesPanel extends View {
           notify({ title: "Select a center pane before opening a file", level: "info" });
           return;
         }
-        const rich = RICH.test(path) && (destination !== "internal" || stack) && await installed("preview-plus").catch(() => false);
+        const rich = (destination !== "internal" || stack) && await installed("preview-plus").catch(() => false);
         if (!this.current(context) || this.openRequest !== request) return;
         if (destination !== "internal") {
           const mod = rich ? "preview-plus" : "files-plus";

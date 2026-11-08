@@ -429,7 +429,7 @@ export default class PreviewPlus extends View {
           .tooltip(this.selected.on ? "Remote file is read-only" : "Truncated file is read-only").accessibility_label("Read-only")
           .child(svg("mods/preview-plus/icons/lock.svg").size(12))))
         .when(type === "markdown", el => el
-          .child(button("preview-mode", this.source ? "Preview" : "Source", colors, cx => this.setSource(!this.source, cx), Boolean(this.code), false, this.source ? "preview" : "code")))
+          .child(button("preview-mode", this.source ? "Preview" : this.document ? "Edit" : "Source", colors, cx => this.setSource(!this.source, cx), Boolean(this.code), false, null)))
         .when(Boolean(file) && !media, el => el
           .child(button("preview-wrap", "Wrap lines", colors, cx => this.toggleWrap(cx), Boolean(this.code) && (type !== "markdown" || this.source), this.wrap)))
         .when(Boolean(this.document), el => el
