@@ -33,10 +33,11 @@ async function directory(path, on) {
   return out;
 }
 
-// Same items as my-files-actions' menu: copy path, (copy relative), copy name, then this Mac's reveal/open, then rename/trash.
+// Same items as my-files-actions' menu: copy path, (copy relative), copy name, then this Mac's reveal/open,
+// then new file/new folder, then rename/trash (one separator before the new/rename group).
 function menuHeight(path, dir, on) {
-  const copies = path ? 3 : 2, local = on ? 0 : dir ? 1 : 2, edit = path ? 2 : 0;
-  return (copies + local + edit) * 31 + ((local ? 1 : 0) + (edit ? 1 : 0)) * 9 + 12;
+  const copies = path ? 3 : 2, local = on ? 0 : dir ? 1 : 2, create = 2, edit = path ? 2 : 0;
+  return (copies + local + create + edit) * 31 + ((local ? 1 : 0) + 1) * 9 + 12;
 }
 
 export default class Files extends View {

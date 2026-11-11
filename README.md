@@ -98,7 +98,7 @@ API 키나 개인 URL은 git 에 올리지 않고 `mcp/secrets.local.json` 에�
 |---|---|
 | `layouts/my-layout.json` | 기본 `main` 레이아웃 복제본. Files 패널이 `my-files` |
 | `layouts/board.json`, `main-timer.json` | 에이전트 보드, 탭별 작업 타이머 레이아웃 |
-| `mods/my-files`, `my-files-actions` | Files 패널: 오른쪽 클릭(경로 복사, Finder에서 보기, 이름 변경, 휴지통), Finder 에서 끌어다 놓기, 이미지 미리보기 |
+| `mods/my-files`, `my-files-actions` | Files 패널: 오른쪽 클릭(경로 복사, Finder에서 보기, 새 파일·새 폴더, 이름 변경, 휴지통), Finder 에서 끌어다 놓기, 이미지 미리보기 |
 | `mods/agent-board`, `timer-tabs`, `git-graph`, `github`, `issues`, `issue-agent` | 개인 모드 (`github`/`issues`/`issue-agent` 는 `gh` 필요) |
 | `mods/files-plus`, `preview-plus`, `file-icons` | 파일 탐색·편집·미리보기, Finder 파일 복사와 Mac ↔ 원격 파일 전송 |
 | `keys.json`, `settings.json`, `fonts/` | 단축키, 글꼴(D2Coding) 등 |
@@ -123,6 +123,7 @@ API 키나 개인 URL은 git 에 올리지 않고 `mcp/secrets.local.json` 에�
 - 원격 전송은 추가 SSH 로그인 없이 연결된 herdr-core를 사용합니다. Mac과 원격에 `python3`, Mac에 `hc`가 필요합니다. 전송 중에는 **Copying…**이 표시됩니다.
 - Downloads·바탕화면의 접근 허용은 macOS가 관리합니다. Mac 파일 복사는 Herdr의 실행 경로 안에서 나누어 처리하며, 접근이 거절되면 **시스템 설정 → 개인정보 보호 및 보안 → 파일 및 폴더**에서 macOS가 요청한 Herdr 항목의 해당 폴더를 허용한 뒤 다시 시도하세요.
 - Finder로 직접 끌어내는 드래그는 모드 API가 지원하지 않으므로 **Copy → Finder에 붙여넣기** 또는 **Save to Mac…**을 사용합니다.
+- 폴더 확인이 한 번 실패해도(앱 재시작·업데이트 직후, SSH 순간 끊김) 10초 안에 다시 확인해 목록을 되살립니다. 20초 넘게 응답이 없는 읽기는 버리고 새로 읽습니다.
 
 로컬 텍스트 파일은 Preview Plus에서 편집하고 `⌘S`로 저장합니다. Markdown은 **Edit** 버튼으로 원문 편집을 엽니다. 원격 파일·40만 자 초과 텍스트는 읽기 전용입니다.
 

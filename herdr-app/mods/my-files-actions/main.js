@@ -1,5 +1,5 @@
 // Actions for the my-files panel, opened as an overlay with
-// props { view: "menu" | "rename" | "delete", root, path, dir, on }.
+// props { view: "menu" | "rename" | "delete" | "create", root, path, dir, on, kind? }.
 // `path` is relative to `root` ("" is the root folder itself); `on` is the machine (null: this Mac).
 // Every action runs here with exec, then bumps shared "my-files.changed" so the panel reloads.
 import { View, div, svg } from "gpui-kit";
@@ -37,12 +37,23 @@ function items(p) {
     list.push(["Finder에서 보기", "reveal", () => sh('open -R -- "$1"', [abs(p)], null).catch((e) => notify({ title: "Finder 열기 실패", body: e.message, level: "error" }))]);
     if (!p.dir) list.push(["기본 앱으로 열기", "open", () => sh('open -- "$1"', [abs(p)], null).catch((e) => notify({ title: "열기 실패", body: e.message, level: "error" }))]);
   }
+  // New entries go inside a folder row (or the root), or next to a file row.
+  list.push(["새 파일…", "new-file", () => openOverlay({ mod: "my-files-actions", kind: "dialog", width: 440, height: 230, props: { ...p, view: "create", kind: "file", overlay: undefined } })]);
+  list.push(["새 폴더…", "new-folder", () => openOverlay({ mod: "my-files-actions", kind: "dialog", width: 440, height: 230, props: { ...p, view: "create", kind: "dir", overlay: undefined } })]);
   if (p.path) {
     list.push(["이름 변경…", "rename", () => openOverlay({ mod: "my-files-actions", kind: "dialog", width: 440, height: 230, props: { ...p, view: "rename", overlay: undefined } })]);
     list.push(["휴지통으로 이동…", "trash", () => openOverlay({ mod: "my-files-actions", kind: "dialog", width: 440, height: 210, props: { ...p, view: "delete", overlay: undefined } })]);
   }
   return list;
 }
+
+// The folder a new entry goes into, absolute: the row itself if it is a folder, else its parent.
+function createDir(p) {
+  if (p.dir) return abs(p);
+  const parent = p.path.includes("/") ? p.path.slice(0, p.path.lastIndexOf("/")) : "";
+  return parent ? `${p.root}/${parent}` : p.root;
+}
+const shortDir = (p) => { const d = createDir(p); return d === p.root ? p.root.split("/").pop() : d.slice(p.root.length + 1); };
 
 // Moves to the Trash. This Mac: ~/.Trash (a numbered name if taken). Other machines: gio trash or trash-put only.
 async function trash(p) {
@@ -60,7 +71,13 @@ export default class FileActions extends View {
     this.error = null;
     this.busy = false;
     this.handle = cx.focus_handle();
-    if (p.view === "rename" && p.root) {
+    if (p.view === "create" && p.root) {
+      this.input = InputState.new({ value: "", placeholder: p.kind === "dir" ? "새 폴더 이름" : "새 파일 이름 (예: notes.md)" });
+      this.input.on("change", (_e, cx) => { this.error = null; cx.notify(); });
+      this.input.on("submit", (_e, cx) => this.create(cx));
+      this.input.focus();
+      cx.timer.after(300, () => this.input.focus());
+    } else if (p.view === "rename" && p.root) {
       const name = baseName(p);
       this.input = InputState.new({ value: name });
       const dot = p.dir ? -1 : name.lastIndexOf(".");
@@ -97,6 +114,27 @@ export default class FileActions extends View {
         await sh('if [ -e "$2" ] || [ -L "$2" ]; then echo "같은 이름이 이미 있습니다" >&2; exit 3; fi; mv -- "$1" "$2"', [abs(p), dest], p.on);
         changed();
         this.close();
+      } catch (e) { this.error = e.message; }
+      finally { this.busy = false; cx.notify(); }
+    });
+  }
+
+  // Creates an empty file or a folder; never overwrites an existing entry.
+  create(cx) {
+    const p = props();
+    const name = this.input.value().trim();
+    if (this.busy) return;
+    if (!name || name === "." || name === ".." || name.includes("/") || /[\x00-\x1f\x7f]/.test(name)) { this.error = "사용할 수 없는 이름입니다"; cx.notify(); return; }
+    const dest = `${createDir(p)}/${name}`;
+    this.busy = true;
+    cx.spawn(async (cx) => {
+      try {
+        await sh(p.kind === "dir"
+          ? 'if [ -e "$1" ] || [ -L "$1" ]; then echo "같은 이름이 이미 있습니다" >&2; exit 3; fi; mkdir -- "$1"'
+          : 'if [ -e "$1" ] || [ -L "$1" ]; then echo "같은 이름이 이미 있습니다" >&2; exit 3; fi; set -C; : > "$1"', [dest], p.on);
+        changed();
+        this.close();
+        notify({ title: p.kind === "dir" ? "폴더 만듦" : "파일 만듦", body: dest.slice(p.root.length + 1) || name, level: "success", timeout: 2500 });
       } catch (e) { this.error = e.message; }
       finally { this.busy = false; cx.notify(); }
     });
@@ -144,6 +182,13 @@ export default class FileActions extends View {
   render(cx) {
     const t = theme();
     const p = props() ?? {};
+    if (p.view === "create") {
+      return this.dialog(p.kind === "dir" ? "새 폴더" : "새 파일",
+        v_flex().gap(6)
+          .child(div().text_size(12).text_color(t.muted).truncate().child(`위치: ${shortDir(p)}`))
+          .child(Input.new(this.input).h(36).px(10).rounded(9).border_1().border_color(t.accent).bg(t.background).text_size(12.8).text_color(t.foreground)),
+        [this.button("mfa-cancel", "취소", false, false, () => this.close()), this.button("mfa-ok", this.busy ? "만드는 중…" : "만들기", true, false, (_e, cx) => this.create(cx))], cx);
+    }
     if (p.view === "rename") {
       return this.dialog(p.dir ? "폴더 이름 변경" : "파일 이름 변경",
         Input.new(this.input).h(36).px(10).rounded(9).border_1().border_color(t.accent).bg(t.background).text_size(12.8).text_color(t.foreground),
@@ -166,7 +211,7 @@ export default class FileActions extends View {
         cx.notify();
       })
       .children(list.map((it, i) => v_flex()
-        .when(i > 0 && (it[1] === "rename" || (it[1] === "reveal" && list[i - 1][1] === "copy")), (el) => el.child(div().mx(7).my(4).h(1).bg(t.border)))
+        .when(i > 0 && ((it[1] === "rename" && list[i - 1][1] !== "new-folder") || it[1] === "new-file" || (it[1] === "reveal" && list[i - 1][1] === "copy")), (el) => el.child(div().mx(7).my(4).h(1).bg(t.border)))
         .child(h_flex().id(`mfa-${i}`).h(31).px(8).gap(9).rounded(7).items_center().cursor_pointer()
           .text_color(it[1] === "trash" ? t.ansi1 : t.foreground)
           .when(i === this.at, (el) => el.bg(t.selected)).hover((s) => s.bg(t.hover))

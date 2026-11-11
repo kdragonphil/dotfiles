@@ -77,7 +77,11 @@ export class FilesPanel extends View {
     this.treeView = cx.new(TreeView, { chunks: [], panel: this, look: this.look });
     this.revision = shared(REVISION);
     this.refresh(cx);
-    cx.timer.every(10000, cx => { if (this.on) this.refresh(cx); });
+    // Remote folders poll; a root that failed to resolve (ssh hiccup, app restart) is re-checked instead of staying empty.
+    cx.timer.every(10000, cx => {
+      if (this.on) this.refresh(cx, { recover: true });
+      else if (this.visible !== false && this.rootInfo?.some(root => !root.exists)) this.refresh(cx, { recover: true });
+    });
     cx.timer.every(60000, cx => { if (!this.on && this.visible !== false) this.refresh(cx, { recover: true }); });
   }
   watch(path, cx) {
@@ -167,6 +171,8 @@ export class FilesPanel extends View {
       this.manualWidthSpace = null; this.lastRequestedWidth = null; this.resizePending = null; this.fitSignature = null; this.fitCause = "user";
     }
     this.watchConfig(loc.space, loc.entry?.file, cx);
+    // A load that never answers (a stalled remote exec) must not block this folder forever.
+    if (this.loading === context && Date.now() - (this.loadingAt || 0) > 20000) { this.generation = {}; this.loading = null; }
     if (this.loading === context) {
       const queued = this.refreshAgain;
       this.refreshAgain = !queued || !queued.paths || !options.paths ? { ...options, paths: undefined } : { ...options, paths: new Set([...queued.paths, ...options.paths]) };
@@ -175,7 +181,7 @@ export class FilesPanel extends View {
     this.syncTree(cx, loc);
     if (!loc.cwd && !loc.entry) return;
     const generation = this.generation, before = this.treeVersion, oldError = this.error, oldLimited = this.limited;
-    this.loading = context; this.refreshAgain = null;
+    this.loading = context; this.loadingAt = Date.now(); this.refreshAgain = null;
     cx.spawn(async cx => {
       try {
         const roots = !this.rootInfo || options.describe || (options.recover && this.rootInfo.some(root => !root.exists))
