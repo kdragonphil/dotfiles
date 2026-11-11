@@ -2,7 +2,13 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { settings } from "herdr";
 
-export const TITLES = { "new-file": "New file", "new-folder": "New folder", rename: "Rename", trash: "Move to Trash", "add-root": "Add folder to workspace", "remove-root": "Remove from workspace" };
+export const TITLES = { "new-file": "새 파일", "new-folder": "새 폴더", rename: "이름 바꾸기", trash: "휴지통으로 이동", "add-root": "작업 공간에 폴더 추가", "remove-root": "작업 공간에서 빼기" };
+const count = target => target.entries?.length || 1;
+export function trashPrompt(target, toTrash) {
+  const name = count(target) > 1 ? `선택한 ${count(target)}개 항목` : `“${target.path.split("/").pop()}”`;
+  return toTrash ? `${name}을(를) 휴지통으로 옮길까요?` : `${name}을(를) 영구 삭제할까요? 되돌릴 수 없습니다.`;
+}
+export const removeRootPrompt = "이 폴더를 작업 공간에서 뺄까요? 디스크의 파일은 그대로 남습니다.";
 const samples = ["MMMMMMMMMM", "中文文件目录名称示例"];
 let calibrated, calibrationKey;
 export const zoom = () => settings().zoom || 1;
@@ -40,7 +46,7 @@ export function calibrationProbe(onChange) {
 }
 export function dialogLayout(action, target, view = viewport(), scale = zoom()) {
   const values = metrics();
-  const prompt = action === "trash" ? `Permanently delete “${target.path.split("/").pop()}”? This cannot be undone.` : action === "remove-root" ? "Remove this folder from the workspace? Files on disk are kept." : "";
+  const prompt = action === "trash" ? trashPrompt(target, false) : action === "remove-root" ? removeRootPrompt : "";
   const width = Math.min(Math.max(420, Math.min(560, Math.ceil(Math.max(textWidth(TITLES[action], 13, values), textWidth(target.path, 12, values), textWidth(prompt, 13, values)) + 36))), view ? Math.max(188, view.width / scale - 36) : 560);
   return { width, height: action === "trash" || action === "remove-root" ? 284 : 252 };
 }

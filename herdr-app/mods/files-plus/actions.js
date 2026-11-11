@@ -140,8 +140,18 @@ export async function renameEntry(target, name) {
   return path;
 }
 
+const isRoot = entry => entry.kind === "root" || entry.path === entry.root || /^[a-z]?:?\/$/i.test(entry.path);
+export const removable = target => (target.entries || [target]).every(entry => !isRoot(entry));
+// 여러 개를 선택했으면 모두(부모 폴더에 들어 있는 항목은 copySelection 이 이미 뺐다) 지운다.
 export async function trashEntry(target) {
   ensureTarget(target);
+  const entries = target.entries?.length ? target.entries : [target];
+  if (!removable(target)) throw new Error("작업 공간 루트 폴더는 여기서 지울 수 없습니다");
+  // 중간에 실패해도 이미 지운 항목이 목록에서 사라지도록 항상 새로고침한다.
+  try { for (const entry of entries) await trashOne({ ...entry, space: target.space, on: target.on }); }
+  finally { changed(); }
+}
+async function trashOne(target) {
   if (target.kind === "root" || target.path === target.root || /^[a-z]?:?\/$/i.test(target.path)) throw new Error("Workspace roots cannot be removed here");
   if (!target.on && window().platform === "macos") {
     const trash = joinPath(home(), ".Trash");
@@ -150,7 +160,6 @@ export async function trashEntry(target) {
     await shell('mv -n "$1" "$2" && { [ ! -e "$1" ] && [ ! -L "$1" ]; }', [target.path, path], null);
   } else if (windows(target.on)) await powershell('param($p) Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction Stop', [target.path]);
   else await checked("rm", ["-rf", "--", target.path], target.on);
-  changed();
 }
 export async function reveal(target) {
   ensureTarget(target);
@@ -165,20 +174,20 @@ export function menuItems(target) {
   const clip = shared(CLIPBOARD), root = target.kind === "root" || target.path === target.root;
   const count = target.entries?.length || 1, multiple = count > 1;
   return [
-    { id: "agent", label: "Add to agent (@)", enabled: !multiple && Boolean(target.active?.terminal) },
-    { id: "copy", label: multiple ? `Copy ${count} items` : "Copy", enabled: true },
-    { id: "paste", label: "Paste", enabled: nativeFiles() || Boolean(clip && clip.on === target.on) },
-    ...(nativeFiles() ? [{ id: "save-to-mac", label: multiple ? `Save ${count} items to Mac…` : "Save to Mac…", enabled: true }] : []),
-    { id: "path", label: multiple ? "Copy paths" : "Copy path", enabled: true },
-    { id: "relative", label: multiple ? "Copy relative paths" : "Copy relative path", enabled: true },
-    { id: "reveal", label: window().platform === "macos" ? "Reveal in Finder" : window().platform === "windows" ? "Reveal in File Explorer" : "Reveal in file manager", enabled: !multiple && target.on === null },
-    { id: "new-file", label: "New file…", enabled: true, group: true },
-    { id: "new-folder", label: "New folder…", enabled: true },
-    { id: "rename", label: "Rename…", enabled: !multiple && !root },
-    { id: "trash", label: "Move to Trash…", enabled: !multiple && !root, danger: true },
+    { id: "agent", label: "에이전트에 추가 (@)", enabled: !multiple && Boolean(target.active?.terminal) },
+    { id: "copy", label: multiple ? `${count}개 항목 복사` : "복사", enabled: true },
+    { id: "paste", label: "붙여넣기", enabled: nativeFiles() || Boolean(clip && clip.on === target.on) },
+    ...(nativeFiles() ? [{ id: "save-to-mac", label: multiple ? `${count}개 항목 Mac에 저장…` : "Mac에 저장…", enabled: true }] : []),
+    { id: "path", label: multiple ? "경로들 복사" : "경로 복사", enabled: true },
+    { id: "relative", label: multiple ? "상대 경로들 복사" : "상대 경로 복사", enabled: true },
+    { id: "reveal", label: window().platform === "macos" ? "Finder에서 보기" : window().platform === "windows" ? "파일 탐색기에서 보기" : "파일 관리자에서 보기", enabled: !multiple && target.on === null },
+    { id: "new-file", label: "새 파일…", enabled: true, group: true },
+    { id: "new-folder", label: "새 폴더…", enabled: true },
+    { id: "rename", label: "이름 바꾸기…", enabled: !multiple && !root },
+    { id: "trash", label: multiple ? `${count}개 항목 휴지통으로 이동…` : "휴지통으로 이동…", enabled: multiple ? removable(target) : !root, danger: true },
     ...(root ? [
-      { id: "new-here", label: "New terminal here", enabled: true, group: true },
-      { id: "remove-root", label: "Remove from workspace", enabled: (workspaceOf(target.space)?.folders.length || 0) > 1 }
+      { id: "new-here", label: "여기서 새 터미널", enabled: true, group: true },
+      { id: "remove-root", label: "작업 공간에서 빼기", enabled: (workspaceOf(target.space)?.folders.length || 0) > 1 }
     ] : [])
   ];
 }

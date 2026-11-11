@@ -6,7 +6,7 @@ import { prune, basename, relativePath } from "./roots.js";
 import { workspaceSnapshot, changeRoots } from "./config.js";
 import { appearance } from "./appearance.js";
 import { CLIPBOARD, menuItems, menuLayout, ensureTarget, insertReference, paste, createEntry, renameEntry, trashEntry, reveal, changed } from "./actions.js";
-import { TITLES, metrics, viewport, zoom, dialogLayout } from "./metrics.js";
+import { TITLES, metrics, viewport, zoom, dialogLayout, trashPrompt, removeRootPrompt } from "./metrics.js";
 import { renderDrag } from "./drag.js";
 import { OPEN_LOCATION, OPEN_OPTIONS, openLocation } from "./preferences.js";
 import { copyFile, nativeFiles, saveToMac } from "./transfer.js";
@@ -32,7 +32,7 @@ export default class FilesPlus extends FilesPanel {
     } else if (this.role === "dialog") {
       if (NAME_ACTIONS.has(this.action)) {
         const value = this.action === "rename" ? basename(this.targetEntry.path) : "";
-        this.input = InputState.new({ value, placeholder: "Name" });
+        this.input = InputState.new({ value, placeholder: "이름" });
         if (value) this.input.set_selected_range({ start: 0, end: value.length });
         this.input.on("change", (_event, cx) => { this.error = null; cx.notify(); });
         this.input.on("submit", (_event, cx) => this.submit(cx));
@@ -99,7 +99,7 @@ export default class FilesPlus extends FilesPanel {
         else if (action === "rename") await renameEntry(target, name);
         else if (action === "trash") await trashEntry(target);
         else if (action === "add-root") {
-          const picked = await pickFolder({ prompt: "Add" });
+          const picked = await pickFolder({ prompt: "추가" });
           if (await changeRoots(target, action, picked, this.captured)) changed();
         } else if (action === "remove-root") { if (await changeRoots(target, action, null, this.captured)) changed(); }
         closeOverlay(props().overlay);
@@ -148,16 +148,16 @@ export default class FilesPlus extends FilesPanel {
         if (event.key === "escape") { if (!this.busy) closeOverlay(props().overlay); cx.stop_propagation(); }
         else if (event.key === "enter" && !this.input) { this.submit(cx); cx.stop_propagation(); }
       })
-      .child(div().text_size(15).font_semibold().child(TITLES[action] || "File action"))
-      .child(div().text_size(12).text_color(t.muted).truncate().child(target.path))
-      .when(Boolean(this.input), el => el.child(Input.new(this.input).h(36).px(10).rounded(8).border_1().border_color(t.input).bg(t.background).text_color(t.foreground).accessibility_label("Name")))
-      .when(action === "trash", el => el.child(div().child(target.on === null && appWindow().platform === "macos" ? `Move “${basename(target.path)}” to Trash?` : `Permanently delete “${basename(target.path)}”? This cannot be undone.`)))
-      .when(action === "remove-root", el => el.child(div().child("Remove this folder from the workspace? Files on disk are kept.")))
-      .when(Boolean(this.error) || this.preparing, el => el.child(div().text_size(12).text_color(this.error ? t.ansi1 : t.muted).child(this.error || "Loading workspace…")))
+      .child(div().text_size(15).font_semibold().child(TITLES[action] || "파일 작업"))
+      .child(div().text_size(12).text_color(t.muted).truncate().child(target.entries?.length > 1 ? target.entries.map(entry => basename(entry.path)).join(", ") : target.path))
+      .when(Boolean(this.input), el => el.child(Input.new(this.input).h(36).px(10).rounded(8).border_1().border_color(t.input).bg(t.background).text_color(t.foreground).accessibility_label("이름")))
+      .when(action === "trash", el => el.child(div().child(trashPrompt(target, target.on === null && appWindow().platform === "macos"))))
+      .when(action === "remove-root", el => el.child(div().child(removeRootPrompt)))
+      .when(Boolean(this.error) || this.preparing, el => el.child(div().text_size(12).text_color(this.error ? t.ansi1 : t.muted).child(this.error || "작업 공간 불러오는 중…")))
       .child(div().flex_1())
       .child(h_flex().justify_end().gap(8)
-        .child(button("dialog-cancel", "Cancel", false, !this.busy, () => closeOverlay(props().overlay)))
-        .child(button("dialog-submit", this.busy ? "Working…" : action === "add-root" ? "Choose folder…" : action === "trash" ? target.on === null && appWindow().platform === "macos" ? "Move to Trash" : "Delete" : action === "remove-root" ? "Remove" : action === "rename" ? "Rename" : "Create", true, enabled, cx => this.submit(cx))));
+        .child(button("dialog-cancel", "취소", false, !this.busy, () => closeOverlay(props().overlay)))
+        .child(button("dialog-submit", this.busy ? "처리 중…" : action === "add-root" ? "폴더 선택…" : action === "trash" ? target.on === null && appWindow().platform === "macos" ? "휴지통으로 이동" : "삭제" : action === "remove-root" ? "빼기" : action === "rename" ? "이름 바꾸기" : "만들기", true, enabled, cx => this.submit(cx))));
   }
   renderSettings() {
     const { colors: t, font } = appearance(), selected = openLocation(shared(OPEN_LOCATION));
@@ -170,15 +170,15 @@ export default class FilesPlus extends FilesPanel {
         } else return;
         cx.stop_propagation(); cx.notify();
       })
-      .child(div().text_size(15).font_semibold().child("Files settings"))
-      .child(div().text_color(t.muted).child("Open files in"))
-      .child(v_flex().gap(4).role("radio_group").accessibility_label("Open files in").children(OPEN_OPTIONS.map(option =>
+      .child(div().text_size(15).font_semibold().child("Files 설정"))
+      .child(div().text_color(t.muted).child("파일 여는 곳"))
+      .child(v_flex().gap(4).role("radio_group").accessibility_label("파일 여는 곳").children(OPEN_OPTIONS.map(option =>
         h_flex().id(`open-${option.value}`).h(32).px(10).gap(10).items_center().rounded(6).cursor_default().role("radio_button").checked(selected === option.value).accessibility_label(option.label)
           .bg(selected === option.value ? t.selected : t.popover).hover(s => s.bg(t.hover))
           .on_click((_event, cx) => { setShared(OPEN_LOCATION, option.value); cx.stop_propagation(); cx.notify(); })
           .child(div().w(14).child(selected === option.value ? "●" : "○")).child(option.label))))
-      .child(h_flex().justify_end().child(div().id("settings-done").px(12).h(28).flex().items_center().rounded(6).role("button").accessibility_label("Done").cursor_default().hover(s => s.bg(t.hover))
-        .on_click(() => closeOverlay(props().overlay)).child("Done")));
+      .child(h_flex().justify_end().child(div().id("settings-done").px(12).h(28).flex().items_center().rounded(6).role("button").accessibility_label("완료").cursor_default().hover(s => s.bg(t.hover))
+        .on_click(() => closeOverlay(props().overlay)).child("완료")));
   }
   render(cx) {
     if (this.role === "preview") return this.renderPreview(cx);

@@ -284,7 +284,7 @@ export class FilesPanel extends View {
         if (!this.current(context) || this.openRequest !== request) return;
         if (existing) { focusOpenFile(existing); return; }
         if (destination === "pane" && !pane) {
-          notify({ title: "Select a center pane before opening a file", level: "info" });
+          notify({ title: "파일을 열기 전에 가운데 창을 먼저 선택하세요", level: "info" });
           return;
         }
         const rich = (destination !== "internal" || stack) && await installed("preview-plus").catch(() => false);
@@ -426,7 +426,7 @@ export class FilesPanel extends View {
     // A child click can consume the event before the panel sees mouse-up.
     this.endSelection(cx);
     if (row.leaving || row.missing || this.suppressClick) { this.suppressClick = false; return; }
-    if (event.click_count < 2 || event.modifiers.platform || event.modifiers.control || event.modifiers.shift) return;
+    if (event.click_count !== 1 || event.modifiers.platform || event.modifiers.control || event.modifiers.shift) return;
     if (row.kind === "file") this.openFile(row.path, row.root, cx); else this.toggle(row.path, cx);
   }
   transferTarget() {
@@ -445,7 +445,7 @@ export class FilesPanel extends View {
         if (action === "drop") await importFiles(paths, target, cx);
         else if (action === "copy") await copyFile(this.selectionTarget(target), cx);
         else await paste(target, cx);
-      } catch (error) { notify({ title: "File copy failed", body: error.message || String(error), level: "error" }); }
+      } catch (error) { notify({ title: "파일 복사 실패", body: error.message || String(error), level: "error" }); }
       finally { this.transferBusy = false; cx.notify(); }
     });
   }
@@ -569,11 +569,11 @@ export class FilesPanel extends View {
       .on_mouse_move((event, cx) => { this.moveSelection(event, cx); dragMove(this, event, cx); })
       .child(calibrationProbe(cx => { this.scheduleFit(cx); cx.notify(); }))
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().bg(t.background).border_b_1().border_color(t.border)
-        .when(Boolean(this.file), el => el.child(h_flex().id("files-back").size(24).items_center().justify_center().rounded(6).cursor_default().role("button").accessibility_label("Back to files").tooltip("Back to files").text_color(t.muted).hover(s => s.bg(t.hover).text_color(t.foreground)).active(s => s.bg(t.selected).text_color(t.foreground))
+        .when(Boolean(this.file), el => el.child(h_flex().id("files-back").size(24).items_center().justify_center().rounded(6).cursor_default().role("button").accessibility_label("파일 목록으로").tooltip("파일 목록으로").text_color(t.muted).hover(s => s.bg(t.hover).text_color(t.foreground)).active(s => s.bg(t.selected).text_color(t.foreground))
           .on_mouse_down("left", (_event, cx) => cx.stop_propagation())
           .on_click((_event, cx) => { cx.stop_propagation(); this.show(null, cx); cx.notify(); }).child(svg("mods/files-plus/arrow-left.svg").size(14))))
-        .child(div().id("files-title").flex_1().min_w(0).truncate().font_semibold().tooltip(loc.cwd || this.root || "").child(this.selectedPaths.size ? `${this.panelTitle()} · ${this.selectedPaths.size} selected` : this.panelTitle()))
-        .child(h_flex().id("add-folder").size(24).items_center().justify_center().rounded(6).cursor_default().text_color(add ? t.muted : t.dim).role("button").accessibility_label("Add folder").tooltip("Add folder…").disabled(!add)
+        .child(div().id("files-title").flex_1().min_w(0).truncate().font_semibold().tooltip(loc.cwd || this.root || "").child(this.selectedPaths.size ? `${this.panelTitle()} · ${this.selectedPaths.size}개 선택` : this.panelTitle()))
+        .child(h_flex().id("add-folder").size(24).items_center().justify_center().rounded(6).cursor_default().text_color(add ? t.muted : t.dim).role("button").accessibility_label("폴더 추가").tooltip("작업 공간에 폴더 추가…").disabled(!add)
           .when(add, el => el.hover(s => s.bg(t.hover).text_color(t.foreground)).active(s => s.bg(t.selected).text_color(t.foreground)).on_mouse_down("left", (_event, cx) => cx.stop_propagation())).on_click((_event, cx) => {
             if (!add) return;
             const root = entry?.folders[0]?.path || this.root;
@@ -582,10 +582,10 @@ export class FilesPanel extends View {
             cx.stop_propagation();
           }).child(svg("mods/files-plus/plus.svg").size(14)))
         .when(Boolean(this.file), el => el.child(div().max_w(140).truncate().text_size(12).text_color(t.dim).tooltip(this.file).child(title)))
-        .when(nativeFiles(), el => el.child(h_flex().id("files-paste").h(24).px(6).flex_none().items_center().rounded(6).cursor_default().role("button").accessibility_label("Paste files from Finder").tooltip("Paste files from Finder (⌘V)").disabled(Boolean(this.transferBusy)).text_size(12).text_color(t.muted).hover(s => s.bg(t.hover))
+        .when(nativeFiles(), el => el.child(h_flex().id("files-paste").h(24).px(6).flex_none().items_center().rounded(6).cursor_default().role("button").accessibility_label("Finder에서 복사한 파일 붙여넣기").tooltip("Finder에서 복사한 파일 붙여넣기 (⌘V)").disabled(Boolean(this.transferBusy)).text_size(12).text_color(t.muted).hover(s => s.bg(t.hover))
           .on_mouse_down("left", (_event, cx) => cx.stop_propagation())
-          .on_click((_event, cx) => { cx.stop_propagation(); this.transferAction("paste", this.transferTarget(), cx); }).child(this.transferBusy ? "Copying…" : "Paste")))
-        .child(h_flex().id("files-settings").size(24).flex_none().items_center().justify_center().rounded(6).cursor_default().role("button").accessibility_label("Files settings").tooltip("Files settings").text_color(t.muted).hover(s => s.bg(t.hover).text_color(t.foreground))
+          .on_click((_event, cx) => { cx.stop_propagation(); this.transferAction("paste", this.transferTarget(), cx); }).child(this.transferBusy ? "복사 중…" : "붙여넣기")))
+        .child(h_flex().id("files-settings").size(24).flex_none().items_center().justify_center().rounded(6).cursor_default().role("button").accessibility_label("Files 설정").tooltip("Files 설정").text_color(t.muted).hover(s => s.bg(t.hover).text_color(t.foreground))
           .on_mouse_down("left", (_event, cx) => cx.stop_propagation())
           .on_click((_event, cx) => {
             cx.stop_propagation();
@@ -593,10 +593,10 @@ export class FilesPanel extends View {
           }).child(svg("mods/files-plus/settings.svg").size(14))))
       .when(Boolean(entry?.error), el => el.child(div().px(14).py(8).text_size(12).text_color(t.ansi1).child(entry.error)))
       .when(!this.file, el => el.child(this.treeView))
-      .when(nativeFiles() && !this.file, el => el.child(div().h(24).px(14).flex_none().flex().items_center().text_size(11).text_color(t.dim).child(this.transferBusy ? "Copying files…" : "⌘/Shift-click or drag to select · Double-click to open")))
+      .when(nativeFiles() && !this.file, el => el.child(div().h(24).px(14).flex_none().flex().items_center().text_size(11).text_color(t.dim).child(this.transferBusy ? "파일 복사 중…" : "클릭해서 열기 · ⌘/Shift-클릭이나 드래그로 여러 개 선택")))
       .when(Boolean(this.file), el => el.child(v_flex().id("files-preview").flex_1().min_h(0)
         .child(this.code ? Editor.new(this.code).flex_1().min_h(0) : div().p(12).text_color(t.muted)
-          .when(!this.fileError, el => el.loop("opacity", { from: 0.5, to: 1, period: 1200, easing: "ease-out" })).child(this.fileError || "Loading file…"))));
+          .when(!this.fileError, el => el.loop("opacity", { from: 0.5, to: 1, period: 1200, easing: "ease-out" })).child(this.fileError || "파일 불러오는 중…"))));
   }
   close() {
     this.context = null; this.generation = {}; this.pending = new Map(); this.previewRequest = null; this.openRequest = null; this.fitTimer = null; this.exitTimer = null;
