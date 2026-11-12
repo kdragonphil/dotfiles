@@ -1,4 +1,13 @@
 {
+  "ai-memory": {
+    "type": "stdio",
+    "command": "/Users/kdragon/.local/bin/ai-memory",
+    "args": [
+      "mcp-bridge",
+      "--server-url",
+      "http://127.0.0.1:49374/mcp"
+    ]
+  },
   "chrome-devtools": {
     "type": "stdio",
     "command": "npx",
@@ -41,19 +50,6 @@
     "args": [
       "-y",
       "@modelcontextprotocol/server-sequential-thinking"
-    ],
-    "env": {}
-  },
-  "serena": {
-    "type": "stdio",
-    "command": "uvx",
-    "args": [
-      "--from",
-      "git+https://github.com/oraios/serena",
-      "serena",
-      "start-mcp-server",
-      "--context",
-      "ide-assistant"
     ],
     "env": {}
   }

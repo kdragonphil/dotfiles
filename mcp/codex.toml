@@ -1,5 +1,40 @@
 # ~/.codex/config.toml 의 [mcp_servers.*] (node_repl, computer-use 제외)
 
+[mcp_servers.ai-memory]
+url = "http://127.0.0.1:49374/mcp"
+default_tools_approval_mode = "approve"
+bearer_token_env_var = "AI_MEMORY_AUTH_TOKEN"
+
+[mcp_servers.ai-memory.tools.memory_delete_page]
+approval_mode = "prompt"
+
+[mcp_servers.ai-memory.tools.memory_feedback]
+approval_mode = "prompt"
+
+[mcp_servers.ai-memory.tools.memory_forget_sweep]
+approval_mode = "prompt"
+
+[mcp_servers.ai-memory.tools.memory_handoff_accept]
+approval_mode = "prompt"
+
+[mcp_servers.ai-memory.tools.memory_handoff_cancel]
+approval_mode = "prompt"
+
+[mcp_servers.ai-memory.tools.memory_message_cancel]
+approval_mode = "prompt"
+
+[mcp_servers.ai-memory.tools.memory_message_pop]
+approval_mode = "prompt"
+
+[mcp_servers.ai-memory.tools.memory_patch_page]
+approval_mode = "prompt"
+
+[mcp_servers.ai-memory.tools.memory_restore_page]
+approval_mode = "prompt"
+
+[mcp_servers.ai-memory.tools.memory_write_pages_batch]
+approval_mode = "prompt"
+
 [mcp_servers.chrome-devtools]
 command = "npx"
 args = [
@@ -44,6 +79,12 @@ args = [
     "-y",
     "@playwright/mcp@latest",
 ]
+
+[mcp_servers.playwright.tools.browser_tabs]
+approval_mode = "approve"
+
+[mcp_servers.playwright.tools.browser_run_code_unsafe]
+approval_mode = "approve"
 
 [mcp_servers.sequential-thinking]
 command = "npx"
