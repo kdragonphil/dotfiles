@@ -6,7 +6,7 @@ Herdr 앱과 코딩 에이전트(Claude Code, Codex) 설정을 여러 Mac에서 
 | 폴더 | 내용 | 스크립트 |
 |---|---|---|
 | `herdr-app/` | Herdr 앱 개인 설정 (레이아웃, 모드, 단축키, 글꼴) | `bin/herdr-app-sync` |
-| `agents/` | 에이전트 전역 지침 (`CLAUDE.md` + SuperClaude, Codex `AGENTS.md`) | `bin/agents-sync` |
+| `agents/` | 에이전트 전역 지침 (Claude `CLAUDE.md`, Codex `AGENTS.md`) | `bin/agents-sync` |
 | `mcp/` | MCP 서버 설정 (Claude Code, Codex). 비밀값은 빼고 저장 | `bin/mcp-sync` |
 
 세 스크립트 모두 명령이 같습니다.
@@ -27,7 +27,7 @@ Herdr 앱과 코딩 에이전트(Claude Code, Codex) 설정을 여러 Mac에서 
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
 brew install git gh node python        # node: npx 로 도는 MCP 서버, python3: 동기화 스크립트(3.11 이상)
-curl -LsSf https://astral.sh/uv/install.sh | sh   # uvx: serena MCP 서버
+curl -fsSL https://github.com/akitaonrails/ai-memory/releases/latest/download/install.sh | sh   # ai-memory: 로컬 기억 MCP 서버
 gh auth login                          # 이 비공개 저장소 clone, github/issues 모드에 필요
 ```
 
@@ -67,7 +67,18 @@ API 키나 개인 URL은 git 에 올리지 않고 `mcp/secrets.local.json` 에�
   ```
 비밀값이 없는 서버는 `apply` 에서 건너뛰고 이름을 알려 줍니다.
 
-`magic`·`magic-ui`·`tavily` 서버는 쓰지 않아 뺐습니다. 다른 컴퓨터에 남아 있으면 Claude Code 는 `claude mcp remove --scope user magic` / `tavily`, Codex 는 `~/.codex/config.toml` 의 해당 `[mcp_servers.*]` 블록을 지우세요(`apply` 는 지우지 않습니다).
+**ai-memory**: 이 컴퓨터에서만 도는 기억 서버(127.0.0.1:49374, 데이터는 `~/Library/Application Support/ai-memory`)입니다. 1-1 에서 설치한 뒤 한 번 연결합니다.
+```sh
+ai-memory setup --plan                                # 바뀔 내용만 확인
+ai-memory setup --agent claude-code --agent codex     # LaunchAgent, MCP, 훅, 스킬 연결
+```
+Codex 는 토큰을 환경변수로 읽으므로 `~/.zshrc` 에 아래 한 줄을 넣고, Codex 를 다시 켠 뒤 `/hooks` 에서 ai-memory 훅을 신뢰(trust)합니다.
+```sh
+[ -r "$HOME/Library/Application Support/ai-memory/auth-tokens/default" ] && export AI_MEMORY_AUTH_TOKEN="$(cat "$HOME/Library/Application Support/ai-memory/auth-tokens/default")"
+```
+웹 화면은 http://127.0.0.1:49374/web (비밀번호는 위 토큰 파일 내용).
+
+`magic`·`magic-ui`·`tavily`·`serena` 서버는 쓰지 않아 뺐습니다. 다른 컴퓨터에 남아 있으면 Claude Code 는 `claude mcp remove --scope user magic` / `tavily` / `serena`, Codex 는 `~/.codex/config.toml` 의 해당 `[mcp_servers.*]` 블록을 지우세요(`apply` 는 지우지 않습니다).
 
 ---
 
@@ -130,10 +141,12 @@ API 키나 개인 URL은 git 에 올리지 않고 `mcp/secrets.local.json` 에�
 ### agents/
 | 저장소 | 홈 |
 |---|---|
-| `agents/claude/*.md` | `~/.claude/CLAUDE.md` 와 그것이 `@` 로 불러오는 SuperClaude 파일들 |
+| `agents/claude/*.md` | `~/.claude/CLAUDE.md` (User Rules만) |
 | `agents/codex/AGENTS.md` | `~/.codex/AGENTS.md` |
 
 핵심 규칙: 답변은 한국어 / 다른 에이전트에게 맡길 때는 먼저 `hc --skill` 을 읽고 따른다.
+
+SuperClaude 는 쓰지 않아 뺐습니다. `apply` 는 파일을 지우지 않으므로, 다른 컴퓨터의 `~/.claude/` 에 남은 SuperClaude 파일(`FLAGS.md`, `RULES.md`, `PRINCIPLES.md`, `MODE_*.md`, `MCP_*.md`, `BUSINESS_*.md`, `RESEARCH_CONFIG.md`, `agents/`, `commands/sc/`)은 직접 지우세요. 새 `CLAUDE.md` 가 더 이상 불러오지 않으므로 남아 있어도 동작에는 영향이 없습니다.
 메모리(`~/.claude/projects/`), `settings.json`, 로그인 정보는 넣지 않습니다.
 
 ### mcp/

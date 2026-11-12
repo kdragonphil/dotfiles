@@ -5,7 +5,7 @@
   agents-sync apply            (원격이 있으면 pull 후) 저장소 → 홈으로 복사. 덮어쓰는 파일은 먼저 백업
   agents-sync status           저장소와 다른 점
 
-대상: ~/.claude/*.md (CLAUDE.md와 그것이 @로 불러오는 SuperClaude 파일), ~/.codex/AGENTS.md
+대상: ~/.claude/*.md (CLAUDE.md 등), ~/.codex/AGENTS.md
 (메모리, settings.json, 인증 정보는 넣지 않는다.)
 """
 import filecmp, os, shutil, subprocess, sys, time
